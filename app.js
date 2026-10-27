@@ -392,7 +392,8 @@ function waterPixel(lat,lng){
 async function isWater(lat,lng){
   const pxv=await waterPixel(lat,lng);
   if(pxv===true)return true;
-  const w=await waitWater(lat,lng);
+  // carte : terre -> on attend peu la confirmation ; carte indisponible -> on attend la base de données
+  const w=pxv===false?await Promise.race([waitWater(lat,lng),new Promise(r=>setTimeout(()=>r({k:null}),3500))]):await waitWater(lat,lng);
   if(w.k)return true;
   if(pxv===false&&!w.error)return false;
   if(pxv===false&&w.error)return false;
