@@ -135,8 +135,8 @@ function zoneScore(z,spot,c,now){
     if(r&&z.prof_min!=null){const lo=+z.prof_min,hi=z.prof_max!=null?+z.prof_max:+z.prof_min;const ov=Math.max(0,Math.min(hi,r[1])-Math.max(lo,r[0]));match=ov>0||(lo<=r[1]&&hi>=r[0])?1:Math.max(.2,1-Math.min(Math.abs(lo-r[1]),Math.abs(hi-r[0]))/4)}
     const sc=x.a*(.45+.55*match);if(!best||sc>best.sc)best={sc,sp:x};}
   if(!best)return null;
-  const near=S.catches.filter(k=>k.spot_id===spot.id&&k.lat!=null&&distKm(k,z)*1000<=Math.max(40,z.rayon*1.5)).length;
-  return {score:Math.min(10,Math.round((best.sc*10*(1+Math.min(near,5)*.06))*10)/10),sp:best.sp,catches:near};
+  const ctx=condCtx(now,c),nearC=catchesInZone(z,spot),near=nearC.length,w=nearC.reduce((t,k)=>t+simCatch(k,ctx),0);
+  return {score:Math.min(10,Math.round((best.sc*10*(1+Math.min(near,5)*.04+Math.min(w,4)*.1))*10)/10),sp:best.sp,catches:near,similar:nearC.filter(k=>simCatch(k,ctx)>=.5).length};
 }
 const WATER_T=[6,6,8,11,15,19,21,21,18,14,10,7];
 
@@ -288,9 +288,11 @@ const AUTOZ={
  pont:{t:"Pont : piles et ombre",micro:["obstacle","fond"],r:15},
  confluence:{t:"Confluence",micro:["confluence","courant"],r:20},
  veine:{t:"Veine de courant",micro:["courant","pleineeau","surface"],r:15},
- ouvrage:{t:"Ouvrage hydraulique : pêche interdite à proximité",micro:[],r:30,ban:true}};
+ ouvrage:{t:"Ouvrage hydraulique : pêche interdite à proximité",micro:[],r:30,ban:true},
+ pointe:{t:"Pointe / avancée de terre : tombant probable",micro:["obstacle","fond","bordure","digue"],r:20},
+ anse:{t:"Anse abritée : herbiers et eau calme",micro:["herbier","bordure","entree","surface"],r:20}};
 const AZ={};
-function getAutoZones(spot){
+function getOsmZones(spot){
   const k=spot.lat.toFixed(4)+","+spot.lng.toFixed(4);
   if(AZ[k])return AZ[k];
   try{const c=JSON.parse(localStorage.getItem("az:"+k));if(c&&Date.now()-c.at<30*dayMs){AZ[k]=c;return c}}catch(e){}
@@ -367,10 +369,106 @@ function buildAutoZones(spot,els){
   return Z.map((z,i)=>{const def=AUTOZ[z.type],ll=G(z.p);return {id:"auto"+i,auto:true,type:z.type,label:def.t,micro:def.micro,ban:!!def.ban,rayon:Math.round(z.r||def.r),lat:ll.lat,lng:ll.lng}});
 }
 function pip(poly,p){let c=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){const a=poly[i],b=poly[j];if(((a.y>p.y)!==(b.y>p.y))&&(p.x<(b.x-a.x)*(p.y-a.y)/((b.y-a.y)||1e-9)+a.x))c=!c}return c}
+/* Analyse du plan d'eau à partir de sa forme sur le fond OpenStreetMap (fonctionne sans service de données) */
+const TA={},IMGC={};
+function loadImg(url){return IMGC[url]||(IMGC[url]=new Promise((res,rej)=>{const i=new Image();i.crossOrigin="anonymous";const t=setTimeout(()=>rej(new Error("timeout")),9000);i.onload=()=>{clearTimeout(t);res(i)};i.onerror=()=>{clearTimeout(t);delete IMGC[url];rej(new Error("img"))};i.src=url}))}
+function tileAnalysis(lat,lng){
+  const k=lat.toFixed(4)+","+lng.toFixed(4);if(TA[k])return TA[k];
+  try{const c=JSON.parse(localStorage.getItem("ta:"+k));if(c&&Date.now()-c.at<60*dayMs){TA[k]=c;return c}}catch(e){}
+  TA[k]={loading:true};
+  (async()=>{let r=null;try{r=await analyzeWater(lat,lng)}catch(e){console.warn("analyse",e)}
+    TA[k]=r?Object.assign(r,{at:Date.now()}):{none:true,error:true,at:Date.now()};
+    if(r)try{localStorage.setItem("ta:"+k,JSON.stringify(TA[k]))}catch(e){}
+    scheduleRender();if(zoneMap)refreshZoneMap(true)})();
+  return TA[k];
+}
+async function analyzeWater(lat,lng){
+  let last=null;
+  for(const z of [17,16,15]){const r=await analyzeAt(lat,lng,z);if(!r)return last;last=r;if(r.kind==="river"||!r.touches)break}
+  return last;
+}
+async function analyzeAt(lat,lng,z){
+  const n=2**z,xt=(lng+180)/360*n,yt=(1-Math.log(Math.tan(lat*rad)+1/Math.cos(lat*rad))/PI)/2*n,X=Math.floor(xt),Y=Math.floor(yt),W=768;
+  const cv=document.createElement("canvas");cv.width=cv.height=W;const g=cv.getContext("2d",{willReadFrequently:true});
+  await Promise.all([-1,0,1].flatMap(dy=>[-1,0,1].map(async dx=>{const im=await loadImg(`https://tile.openstreetmap.org/${z}/${X+dx}/${Y+dy}.png`);g.drawImage(im,(dx+1)*256,(dy+1)*256)})));
+  const px=g.getImageData(0,0,W,W).data,N=W*W;
+  let m=new Uint8Array(N);
+  for(let p=0,i=0;p<N;p++,i+=4)m[p]=(Math.abs(px[i]-170)<=10&&Math.abs(px[i+1]-211)<=10&&Math.abs(px[i+2]-223)<=10)?1:0;
+  // fermeture (bouche les trous des noms écrits sur l'eau)
+  const morph=(src,dil)=>{const o=new Uint8Array(N);for(let y=0;y<W;y++)for(let x=0;x<W;x++){let v=dil?0:1;for(let dy=-2;dy<=2&&(dil?!v:v);dy++)for(let dx=-2;dx<=2;dx++){const xx=x+dx,yy=y+dy;if(xx<0||yy<0||xx>=W||yy>=W)continue;const s=src[yy*W+xx];if(dil&&s){v=1;break}if(!dil&&!s){v=0;break}}o[y*W+x]=v}return o};
+  m=morph(morph(m,true),false);
+  const sx=Math.min(W-1,Math.floor((xt-X+1)*256)),sy=Math.min(W-1,Math.floor((yt-Y+1)*256));
+  let start=-1;for(let r=0;r<=18&&start<0;r++)for(let dy=-r;dy<=r&&start<0;dy++)for(let dx=-r;dx<=r;dx++){const x=sx+dx,y=sy+dy;if(x>=0&&y>=0&&x<W&&y<W&&m[y*W+x]){start=y*W+x;break}}
+  if(start<0)return null;
+  const reg=new Uint8Array(N),q=new Int32Array(N);let qh=0,qt=0,area=0,border=0;reg[start]=1;q[qt++]=start;
+  while(qh<qt){const p=q[qh++];area++;const x=p%W,y=(p/W)|0;if(x===0||y===0||x===W-1||y===W-1)border++;
+    if(x>0&&m[p-1]&&!reg[p-1]){reg[p-1]=1;q[qt++]=p-1}if(x<W-1&&m[p+1]&&!reg[p+1]){reg[p+1]=1;q[qt++]=p+1}
+    if(y>0&&m[p-W]&&!reg[p-W]){reg[p-W]=1;q[qt++]=p-W}if(y<W-1&&m[p+W]&&!reg[p+W]){reg[p+W]=1;q[qt++]=p+W}}
+  if(area<30)return null;
+  // distance à la berge (chanfrein)
+  const D=new Float32Array(N);for(let p=0;p<N;p++)D[p]=reg[p]?1e6:0;
+  const S2=1.4142;
+  for(let y=0;y<W;y++)for(let x=0;x<W;x++){const p=y*W+x;if(!reg[p])continue;let v=D[p];
+    if(x>0)v=Math.min(v,D[p-1]+1);if(y>0){v=Math.min(v,D[p-W]+1);if(x>0)v=Math.min(v,D[p-W-1]+S2);if(x<W-1)v=Math.min(v,D[p-W+1]+S2)}D[p]=v}
+  for(let y=W-1;y>=0;y--)for(let x=W-1;x>=0;x--){const p=y*W+x;if(!reg[p])continue;let v=D[p];
+    if(x<W-1)v=Math.min(v,D[p+1]+1);if(y<W-1){v=Math.min(v,D[p+W]+1);if(x<W-1)v=Math.min(v,D[p+W+1]+S2);if(x>0)v=Math.min(v,D[p+W-1]+S2)}D[p]=v}
+  for(let p=0;p<N;p++)if(D[p]>=1e5)D[p]=W; // région sans berge visible (très grand plan d'eau)
+  const mpp=156543.03392*Math.cos(lat*rad)/n;
+  const sxp=start%W,syp=(start/W)|0,maxR=450/mpp,near=(x,y)=>Math.hypot(x-sxp,y-syp)<=maxR;
+  let maxD=0,argD=start;for(let p=0;p<N;p++)if(reg[p]&&D[p]>maxD&&near(p%W,(p/W)|0)){maxD=D[p];argD=p}
+  const elong=area/(PI*maxD*maxD+1),touches=border>Math.max(10,area*.004);
+  const kind=(elong>6&&maxD*mpp<60)||(touches&&elong>3.5&&maxD*mpp<40)?"river":"lake";
+  const areaM2=area*mpp*mpp,widthM=2*maxD*mpp;
+  const milieu=kind==="river"?(widthM<7?"petite_riviere":"grande_riviere"):(areaM2<200000&&!touches?"etang":"lac");
+  // proportion d'eau autour de chaque point de berge (table intégrale)
+  const I=new Uint32Array((W+1)*(W+1));for(let y=0;y<W;y++){let row=0;for(let x=0;x<W;x++){row+=reg[y*W+x];I[(y+1)*(W+1)+x+1]=I[y*(W+1)+x+1]+row}}
+  const hw=Math.max(5,Math.min(40,Math.round(maxD*.9)));
+  const frac=(x,y)=>{const x0=Math.max(0,x-hw),y0=Math.max(0,y-hw),x1=Math.min(W,x+hw+1),y1=Math.min(W,y+hw+1);return (I[y1*(W+1)+x1]-I[y0*(W+1)+x1]-I[y1*(W+1)+x0]+I[y0*(W+1)+x0])/((x1-x0)*(y1-y0))};
+  const shore=[];
+  for(let y=2;y<W-2;y+=2)for(let x=2;x<W-2;x+=2){const p=y*W+x;if(!reg[p]||!near(x,y))continue;if(reg[p-1]&&reg[p+1]&&reg[p-W]&&reg[p+W])continue;shore.push({x,y,f:frac(x,y)})}
+  const inward=(x,y)=>{let p=y*W+x;const goal=Math.min(maxD*.5,Math.max(2,6/mpp));for(let i=0;i<40&&D[p]<goal;i++){let b=p;for(const o of [-1,1,-W,W,-W-1,-W+1,W-1,W+1]){const q2=p+o;if(q2>=0&&q2<N&&reg[q2]&&D[q2]>D[b])b=q2}if(b===p)break;p=b}return {x:p%W,y:(p/W)|0}};
+  const toLL=(x,y)=>{const tx=X-1+x/256,ty=Y-1+y/256;return {lat:+(Math.atan(Math.sinh(PI*(1-2*ty/n)))/rad).toFixed(6),lng:+(tx/n*360-180).toFixed(6)}};
+  const Z=[],minSep=px=>Z.every(z=>Math.hypot(z.x-px.x,z.y-px.y)*mpp>=55);
+  const push=(type,pt,r)=>{if(!minSep(pt))return false;Z.push({type,x:pt.x,y:pt.y,r});return true};
+  const zr=Math.max(10,Math.min(25,maxD*mpp*.35));
+  if(kind==="lake"){
+    const big=maxD*mpp>150||touches;
+    push(big?"large":"centre",{x:argD%W,y:(argD/W)|0},Math.min(120,Math.max(20,maxD*mpp*.5)));
+    const byHigh=shore.filter(s=>s.f>.6).sort((a,b)=>b.f-a.f),byLow=shore.filter(s=>s.f<.4).sort((a,b)=>a.f-b.f);
+    let c1=0;for(const s of byHigh){if(c1>=3)break;if(push("pointe",inward(s.x,s.y),zr))c1++}
+    let c2=0;for(const s of byLow){if(c2>=3)break;if(push("anse",inward(s.x,s.y),zr))c2++}
+    const step=Math.max(4,Math.floor(shore.length/8));for(let i=0;i<shore.length&&Z.length<10;i+=step)push("bordure",inward(shore[i].x,shore[i].y),zr);
+  }else{
+    // rivière : extérieur des virages = berge creuse (peu d'eau autour), intérieur = berge en pointe
+    const outer=shore.filter(s=>s.f<.42).sort((a,b)=>a.f-b.f),inner=shore.filter(s=>s.f>.58).sort((a,b)=>b.f-a.f);
+    let c1=0;for(const s of outer){if(c1>=3)break;if(push("ext",inward(s.x,s.y),Math.max(8,widthM*.35)))c1++}
+    let c2=0;for(const s of inner){if(c2>=2)break;if(push("int",inward(s.x,s.y),Math.max(8,widthM*.35)))c2++}
+    const ridge=[];for(let y=3;y<W-3;y+=3)for(let x=3;x<W-3;x+=3){const p=y*W+x;if(!reg[p]||!near(x,y)||D[p]<maxD*.75)continue;ridge.push({x,y})}
+    for(let i=0;i<ridge.length&&Z.length<9;i+=Math.max(1,Math.floor(ridge.length/5)))push("veine",ridge[i],Math.max(8,widthM*.3));
+  }
+  return {kind,milieu,areaM2:Math.round(areaM2),widthM:Math.round(widthM),touches,z,zones:Z.map((q2,i)=>{const d=AUTOZ[q2.type],ll=toLL(q2.x,q2.y);return {id:"t"+i,auto:true,type:q2.type,label:d.t,micro:d.micro,ban:!!d.ban,rayon:Math.round(q2.r||d.r),lat:ll.lat,lng:ll.lng}})};
+}
+function getAutoZones(spot){
+  const T=tileAnalysis(spot.lat,spot.lng),O=getOsmZones(spot);
+  if(T.loading&&O.loading)return {loading:true,zones:[]};
+  const base=(T.zones||[]).slice(),extra=(O.zones||[]).filter(z=>["pont","confluence","ouvrage","digue","entree"].includes(z.type)||!base.length);
+  const all=base.slice();extra.forEach(z=>{if(all.every(b=>distKm(b,z)*1000>25))all.push(z)});
+  return {zones:all,loading:false,error:!all.length&&!!(T.error||T.none)&&!!O.error,analysis:T.kind?T:null,partial:T.loading||O.loading};
+}
+
 // Espèces probables dans une zone suggérée, avec le leurre adapté
+function catchesInZone(z,spot){return S.catches.filter(k=>k.lat!=null&&(k.spot_id===spot.id||spot.temp)&&distKm(k,z)*1000<=Math.max(30,(z.rayon||25)*1.5))}
 function autoZoneSpecies(z,spot,c,now){
   if(z.ban||!c)return [];
-  return speciesFor(spot,now,c).filter(x=>!x.closed).map(x=>{const hit=x.micro.filter(m=>z.micro.includes(m)).length;return {x,sc:x.a*(hit?Math.min(1,.75+.15*hit):.3)}}).sort((a,b)=>b.sc-a.sc).slice(0,3);
+  const ctx=condCtx(now,c),inz=catchesInZone(z,spot);
+  return speciesFor(spot,now,c).filter(x=>!x.closed).map(x=>{const hit=x.micro.filter(m=>z.micro.includes(m)).length;
+    const w=inz.filter(k=>k.espece===x.s.id).reduce((t,k)=>t+simCatch(k,ctx),0);
+    return {x,sc:Math.min(1,x.a*(hit?Math.min(1,.75+.15*hit):.3)*(1+Math.min(w,4)*.15)),here:inz.filter(k=>k.espece===x.s.id).length}}).sort((a,b)=>b.sc-a.sc).slice(0,3);
+}
+// Zone la plus proche d'une position (zones suggérées et zones du groupe)
+function zoneAt(spot,pt){
+  const A=getAutoZones(spot),list=[...(A.zones||[]).map((z,i)=>({z,label:z.label.split(" :")[0],num:i+1})),...S.zones.filter(z=>z.spot_id===spot.id).map(z=>({z,label:ZONE_TYPES[z.type]||"Zone du groupe"}))];
+  let best=null;list.forEach(o=>{const d=distKm(o.z,pt)*1000;if(d<=Math.max(40,(o.z.rayon||25)*2)&&(!best||d<best.d))best={...o,d}});return best;
 }
 const WPX={};
 function waterPixel(lat,lng){
@@ -438,6 +536,8 @@ function milieuOf(spot){
   if(spot.milieu)return {k:spot.milieu,src:"fiche"};
   const det=spot.lat!=null&&getWaterBody(spot.lat,spot.lng);
   if(det&&det.k)return {k:det.k,src:"auto",name:det.name};
+  const ta=spot.lat!=null&&(det&&(det.error||!det.loading)?tileAnalysis(spot.lat,spot.lng):TA[spot.lat.toFixed(4)+","+spot.lng.toFixed(4)]);
+  if(ta&&ta.milieu)return {k:ta.milieu,src:"forme"};
   if(spot.type==="mer")return {k:"mer",src:"type"};
   if(spot.type==="etang")return {k:"etang",src:"type"};
   return {k:null,src:"inconnu"};
@@ -448,13 +548,25 @@ function spotMaxDepth(spot){
   S.depths.filter(d=>d.spot_id===spot.id).forEach(d=>{if(mx==null||+d.m>mx)mx=+d.m});
   return mx;
 }
+// Ressemblance entre les conditions d'une prise et celles du moment (0 à 1)
+function condCtx(d,c){return {m:d.getMonth(),h:d.getHours()+d.getMinutes()/60,water:c?c.w.water:null,trend:c?c.w.trend:null,cloud:c?c.w.cloud:null,mom:c?c.mom:null}}
+function simCatch(k,ctx){
+  const t=new Date(k.caught_at),mt=k.meteo||{};
+  let dm=Math.abs(t.getMonth()-ctx.m);dm=Math.min(dm,12-dm);
+  let dh=Math.abs((mt.hour!=null?mt.hour:t.getHours()+t.getMinutes()/60)-ctx.h);dh=Math.min(dh,24-dh);
+  let s=Math.exp(-((dm/1.5)**2))*Math.exp(-((dh/3)**2));
+  if(mt.water!=null&&ctx.water!=null)s*=Math.exp(-(((mt.water-ctx.water)/4)**2));else s*=.85;
+  if(mt.trend!=null&&ctx.trend!=null)s*=Math.sign(Math.round(mt.trend))===Math.sign(Math.round(ctx.trend))?1:.8;
+  if(mt.cloud!=null&&ctx.cloud!=null)s*=(mt.cloud>60)===(ctx.cloud>60)?1:.85;
+  return s;
+}
 function localCatches(spot){
   return spot.temp?S.catches.filter(k=>{const sp=spotById(k.spot_id),pt=k.lat!=null?k:sp;return pt&&distKm(pt,spot)<1}):S.catches.filter(k=>k.spot_id===spot.id);
 }
 function speciesFor(spot,d,c){
   const m=d.getMonth(),mil=milieuOf(spot),mer=mil.k==="mer"||spot.type==="mer";
-  const mx=spotMaxDepth(spot),local=localCatches(spot);
-  const byEsp={};local.forEach(k=>{(byEsp[k.espece]=byEsp[k.espece]||[]).push(k)});
+  const mx=spotMaxDepth(spot),local=localCatches(spot),ctx=condCtx(d,c);
+  const byEsp={};local.forEach(k=>{k._sim=simCatch(k,ctx);(byEsp[k.espece]=byEsp[k.espece]||[]).push(k)});
   return SPECIES.filter(s=>{const h=mil.k?HABITAT[s.id][mil.k]:mer?s.hab[5]:Math.max(...s.hab.slice(0,5));return h>=.15||byEsp[s.id]}).filter(s=>s.id!=="truite"||spot.cat==="1"||mil.k==="petite_riviere"||byEsp.truite).map(s=>{
     const why=[];let a=s.mois[m];
     why.push(a>=.8?"pleine saison":a>=.5?"saison correcte":"hors saison");
@@ -466,8 +578,9 @@ function speciesFor(spot,d,c){
     let hab=mer&&!mil.k?s.hab[5]:.7;
     if(mil.k){hab=HABITAT[s.id][mil.k];why.push(hab>=.85?`milieu idéal (${MILIEU[mil.k].toLowerCase()})`:hab<=.3?`rare en ${MILIEU[mil.k].toLowerCase()}`:`présent en ${MILIEU[mil.k].toLowerCase()}`)}
     const caught=byEsp[s.id]||[];
-    if(caught.length){hab=Math.max(hab,.85);why.push(`${caught.length} prise${caught.length>1?"s":""} ${spot.temp?"dans le secteur":"ici"}`)}
-    a*=hab*(1+Math.min(caught.length,10)*.06);
+    const simSum=caught.reduce((t,k)=>t+k._sim,0),similar=caught.filter(k=>k._sim>=.5).length;
+    if(caught.length){hab=Math.max(hab,.85);why.push(`${caught.length} prise${caught.length>1?"s":""} ${spot.temp?"dans le secteur":"ici"}${similar?`, dont ${similar} dans des conditions proches`:""}`)}
+    a*=hab*(1+Math.min(caught.length,10)*.03+Math.min(simSum,6)*.12);
     if(s.id==="truite"&&spot.cat!=="1")why.push("seulement si le cours d'eau est en 1re catégorie");
     let prof=s.prof[wt<10?"froid":wt<18?"doux":"chaud"];
     if(mil.k==="petite_riviere")prof="0,3 à 1,5 m : trous, sous-berges, aval des radiers";
@@ -475,9 +588,9 @@ function speciesFor(spot,d,c){
     if(mx!=null&&r&&r[0]>mx)prof=`Le plus profond du spot (environ ${mx} m), conseillé ${r[0]} m et plus`;
     let leurres=s.leurres.slice();
     if(mil.k==="petite_riviere"&&!["carpe","gardon"].includes(s.id))leurres=leurres.map(l=>l.replace(/\d+-?\d* cm/,"plus petit (3-7 cm)"));
-    const lc={};caught.forEach(k=>{if(k.leurre)lc[k.leurre]=(lc[k.leurre]||0)+1});
+    const lc={};caught.forEach(k=>{if(k.leurre)lc[k.leurre]=(lc[k.leurre]||0)+.3+k._sim});
     const topLure=Object.entries(lc).sort((x,y)=>y[1]-x[1])[0];
-    if(topLure)leurres.unshift("★ "+topLure[0]+" (a marché ici)");
+    if(topLure)leurres.unshift("★ "+topLure[0]+(caught.some(k=>k.leurre===topLure[0]&&k._sim>=.5)?" (a marché ici dans des conditions proches)":" (a marché ici)"));
     return {s,a:Math.min(1,a),closed:s.closed(m),prof,why,leurres,caught:caught.length,micro:s.micro};
   }).sort((x,y)=>y.a-x.a);
 }
@@ -517,6 +630,32 @@ async function flushUrls(){
 const img=(path,cls,alt,bucket)=>{const u=photo(path,bucket);return u?`<img class="${cls}" src="${esc(u)}" alt="${esc(alt||"")}" loading="lazy">`:`<div class="${cls} ph">${path?"…":esc(alt||"Pas de photo")}</div>`};
 const avatar=(u,lg)=>{const p=S.profiles[u],url=p&&photo(p.photo_path);return url?`<img class="avatar${lg?" lg":""}" src="${esc(url)}" alt="">`:`<div class="avatar${lg?" lg":""}">${esc((pseudo(u)[0]||"?").toUpperCase())}</div>`};
 
+async function readExif(file){
+  try{const buf=await file.slice(0,512*1024).arrayBuffer(),v=new DataView(buf);if(v.getUint16(0)!==0xFFD8)return null;let o=2;
+    while(o<v.byteLength-10){const mk=v.getUint16(o),len=v.getUint16(o+2);if(mk===0xFFE1&&v.getUint32(o+4)===0x45786966)return parseTiff(v,o+10);if((mk&0xFF00)!==0xFF00)break;o+=2+len}
+  }catch(e){}return null;
+}
+function parseTiff(v,t){
+  const le=v.getUint16(t)===0x4949,u16=a=>v.getUint16(a,le),u32=a=>v.getUint32(a,le);
+  const ifd=off=>{const n=u16(t+off),e={};for(let i=0;i<n;i++){const p=t+off+2+i*12;e[u16(p)]={count:u32(p+4),voff:p+8}}return e};
+  const rat=a=>{const d=u32(t+a+4);return d?u32(t+a)/d:0};
+  const str=en=>{const off=en.count>4?t+u32(en.voff):en.voff;let r="";for(let i=0;i<en.count-1;i++)r+=String.fromCharCode(v.getUint8(off+i));return r};
+  const out={},i0=ifd(u32(t+4));
+  const dEnt=i0[0x8769]?(()=>{const ex=ifd(u32(i0[0x8769].voff));return ex[0x9003]||ex[0x9004]})():null;
+  const dt=dEnt||i0[0x0132];if(dt){const m=str(dt).match(/(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)/);if(m)out.date=new Date(+m[1],m[2]-1,+m[3],+m[4],+m[5],+m[6])}
+  if(i0[0x8825]){const gp=ifd(u32(i0[0x8825].voff)),tri=en=>{const a=u32(en.voff);return rat(a)+rat(a+8)/60+rat(a+16)/3600};
+    if(gp[2]&&gp[4]){let la=tri(gp[2]),ln=tri(gp[4]);if(gp[1]&&String.fromCharCode(v.getUint8(gp[1].voff))==="S")la=-la;if(gp[3]&&String.fromCharCode(v.getUint8(gp[3].voff))==="W")ln=-ln;
+      if(isFinite(la)&&isFinite(ln)&&(la||ln)){out.lat=+la.toFixed(6);out.lng=+ln.toFixed(6)}}}
+  return out;
+}
+const localISO=d=>{const z=new Date(d.getTime()-d.getTimezoneOffset()*6e4);return z.toISOString().slice(0,16)};
+async function histWeather(spot,when){
+  const day=x=>x.toISOString().slice(0,10),prev=new Date(when.getTime()-dayMs);
+  const j=await fetchJSON(`https://api.open-meteo.com/v1/forecast?latitude=${spot.lat.toFixed(3)}&longitude=${spot.lng.toFixed(3)}&hourly=temperature_2m,pressure_msl,wind_speed_10m,cloud_cover,precipitation&timezone=GMT&start_date=${day(prev)}&end_date=${day(when)}`);
+  const h=j.hourly,ts=h.time.map(x=>new Date(x+"Z").getTime());let i=ts.findIndex(x=>x>when.getTime())-1;if(i<0)i=ts.length-1;const i3=Math.max(0,i-3);
+  const avg=h.temperature_2m.slice(Math.max(0,i-24),i+1).reduce((a,b)=>a+b,0)/Math.min(25,i+1);
+  return {temp:h.temperature_2m[i],press:h.pressure_msl[i],trend:h.pressure_msl[i]-h.pressure_msl[i3],wind:h.wind_speed_10m[i],cloud:h.cloud_cover[i],rainmm:h.precipitation[i],water:(WATER_T[when.getMonth()]*2+avg)/3};
+}
 async function compress(file,max=1280,q=.78){
   let src;
   try{src=await createImageBitmap(file)}catch(e){
@@ -753,6 +892,13 @@ function spotSheet(id){
     <div id="zonemap" style="height:min(52vh,380px);border-radius:12px;border:1px solid var(--line)"></div>
     <div class="row small" style="margin-top:8px;gap:6px"><span class="chip ok"><span class="dot" style="background:#2E7D4F"></span>Fort potentiel</span><span class="chip warn"><span class="dot" style="background:#C07A00"></span>Moyen</span><span class="chip ghost"><span class="dot" style="background:#8A968E"></span>Faible</span><span class="chip ban"><span class="dot" style="background:#C2362B"></span>Interdit</span><span class="chip ghost"><span class="dot" style="background:#2F7FD0"></span>Prises (${ptsCatch})</span></div>
     ${s.temp?`<p class="small muted">Crée un spot ici pour ajouter vos propres zones.</p>`:`<button class="btn primary wide" style="margin-top:12px" data-act="zone-add">+ Ajouter une zone</button>`}
+    ${(()=>{if(!c)return "";const cands=[];auto.forEach((z,i)=>{if(z.ban)return;const t=autoZoneSpecies(z,s,c,now)[0];if(t)cands.push({sc:t.sc,txt:`zone ${i+1} (${esc(z.label.split(" :")[0].toLowerCase())})`,t})});
+      ranked.forEach(({z,r})=>{if(r)cands.push({sc:r.score/10,txt:`votre zone « ${esc(ZONE_TYPES[z.type]||"zone")} »`,t:{x:r.sp,here:r.catches}})});
+      const b=cands.sort((x,y)=>y.sc-x.sc)[0];if(!b)return "";
+      const an=AZs.analysis;
+      return `<div class="panel" style="margin-top:12px;border-color:var(--accent)"><div class="lbl">Le meilleur endroit maintenant</div>
+        <p style="margin:6px 0 0"><b>${b.txt}</b> : ${esc(b.t.x.s.nom)} avec ${esc(b.t.x.leurres[0])}, ${esc(b.t.x.prof)}.${b.t.here?` <b>${b.t.here}</b> prise${b.t.here>1?"s":""} déjà faite${b.t.here>1?"s":""} ici.`:""}</p>
+        ${an?`<p class="small muted" style="margin:6px 0 0">Analyse du plan d'eau : ${an.kind==="river"?"cours d'eau d'environ "+an.widthM+" m de large":(an.touches?"grand plan d'eau":"plan d'eau d'environ "+(an.areaM2>=10000?(an.areaM2/10000).toFixed(1)+" ha":Math.round(an.areaM2)+" m²"))}, ${auto.length} zones repérées.</p>`:""}</div>`})()}
     ${AZs.loading?`<div class="alert info" style="margin-top:12px">Analyse de la forme du plan d'eau…</div>`:AZs.error?`<div class="alert warn" style="margin-top:12px">Analyse impossible pour l'instant (réseau ou service OpenStreetMap occupé). Réessaie dans un moment.</div>`:!auto.length?`<div class="alert warn" style="margin-top:12px">Aucune forme d'eau trouvée ici dans OpenStreetMap : touche plus près de l'eau, ou placez vos zones vous-mêmes.</div>`:""}
     ${c?`<h3>Où chercher chaque poisson maintenant</h3>
     <div class="stack" style="gap:8px">${spp.map(x=>{const wz=whereFor(x);return `<div class="panel sp" style="padding:12px${x.closed?";opacity:.55":""}">
@@ -858,7 +1004,7 @@ function spotSheet(id){
     <div class="bar"><button class="btn sm" data-act="close" aria-label="Fermer">←</button><span class="t">${esc(s.nom)}</span>${s.temp?"":`<span class="chip ${st.c}">${st.t}</span>`}</div>
     <div class="wrap" style="padding-top:14px">
       ${(()=>{const mi=milieuOf(s),wb=getWaterBody(s.lat,s.lng);const nm=s.nom_eau||(wb&&wb.name)||"";
-        return `<div class="row" style="margin-bottom:8px;gap:6px">${mi.k?`<span class="chip ok">${MILIEU[mi.k]}${nm?" · "+esc(nm):""}</span><span class="small muted">${mi.src==="auto"?"reconnu automatiquement":mi.src==="fiche"?"d'après la fiche":"d'après le type"}</span>`:wb&&wb.loading?`<span class="chip ghost">Reconnaissance du point d'eau…</span>`:s.temp?`<span class="chip warn">Type de point d'eau inconnu</span></div><div class="row" style="gap:6px;margin-bottom:8px"><span class="small muted">C'est :</span>${Object.entries(MILIEU).map(([v,t])=>`<button class="chip ghost" style="cursor:pointer" data-milieu="${v}">${t}</button>`).join("")}${wb&&wb.error?`<button class="chip ghost" style="cursor:pointer" data-act="wb-retry" data-spot="${s.id}">↻ Réessayer</button>`:""}`:wb&&wb.error?`<span class="chip warn">Reconnaissance impossible pour l'instant</span><button class="btn sm" data-act="wb-retry" data-spot="${s.id}">Réessayer</button>`:`<span class="chip warn">Milieu non reconnu</span><span class="small muted">${s.temp?"touche plus près de l'eau":s.owner===S.user.id?"précise-le avec « Modifier le spot »":"l'auteur du spot peut le préciser"}</span>`}</div>`})()}
+        return `<div class="row" style="margin-bottom:8px;gap:6px">${mi.k?`<span class="chip ok">${MILIEU[mi.k]}${nm?" · "+esc(nm):""}</span><span class="small muted">${mi.src==="auto"?"reconnu automatiquement":mi.src==="forme"?"déduit de la forme du plan d'eau":mi.src==="fiche"?"d'après la fiche":"d'après le type"}</span>`:wb&&wb.loading?`<span class="chip ghost">Reconnaissance du point d'eau…</span>`:s.temp?`<span class="chip warn">Type de point d'eau inconnu</span></div><div class="row" style="gap:6px;margin-bottom:8px"><span class="small muted">C'est :</span>${Object.entries(MILIEU).map(([v,t])=>`<button class="chip ghost" style="cursor:pointer" data-milieu="${v}">${t}</button>`).join("")}${wb&&wb.error?`<button class="chip ghost" style="cursor:pointer" data-act="wb-retry" data-spot="${s.id}">↻ Réessayer</button>`:""}`:wb&&wb.error?`<span class="chip warn">Reconnaissance impossible pour l'instant</span><button class="btn sm" data-act="wb-retry" data-spot="${s.id}">Réessayer</button>`:`<span class="chip warn">Milieu non reconnu</span><span class="small muted">${s.temp?"touche plus près de l'eau":s.owner===S.user.id?"précise-le avec « Modifier le spot »":"l'auteur du spot peut le préciser"}</span>`}</div>`})()}
       <div class="small muted" style="margin-bottom:10px">${s.type==="etang"?"Plan d'eau":s.type==="mer"?"Côte":"Cours d'eau"} · <span class="num">${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}</span>${S.pos?` · <span class="num">${distKm(S.pos,s).toFixed(1)} km</span>`:""}${s.exemple?" · exemple":""}${s.prive?" · privé":""}${s.owner&&!s.exemple?" · ajouté par "+esc(pseudo(s.owner)):""}</div>
       <div class="grid2">
         <button class="btn primary" data-act="waze" data-spot="${s.id}">Y aller avec Waze</button>
@@ -895,10 +1041,18 @@ function catchCard(x){
       <div class="small">${x.poids?`<span class="num">${esc(x.poids)} kg</span> · `:""}${esc(x.leurre||"Leurre non précisé")}${x.technique?" · "+esc(x.technique):""}</div>
       <div class="small muted">${esc(s?s.nom:"Spot supprimé")} · ${dateFr(x.caught_at)}</div>
       <div class="row small" style="margin-top:6px;gap:6px"><span class="chip ${x.relache?"ok":"ghost"}">${x.relache?"Relâché":"Gardé"}</span>
-        ${x.meteo&&x.meteo.temp!=null?`<span class="chip ghost num">${Math.round(x.meteo.temp)}°C · ${Math.round(x.meteo.press)} hPa</span>`:""}
+        ${x.meteo&&x.meteo.mom?`<span class="chip ghost">${{aube:"Aube",jour:"Journée",crep:"Crépuscule",nuit:"Nuit"}[x.meteo.mom]||""}</span>`:""}
+        ${x.meteo&&x.meteo.temp!=null?`<span class="chip ghost num">${Math.round(x.meteo.temp)}°C · ${Math.round(x.meteo.press)} hPa${x.meteo.trend!=null?(x.meteo.trend<-.6?" ↘":x.meteo.trend>.6?" ↗":" →"):""}${x.meteo.water!=null?" · eau "+Math.round(x.meteo.water)+"°C":""}</span>`:""}
+        ${x.meteo&&x.meteo.moon?`<span class="chip ghost">${esc(x.meteo.moon)}</span>`:""}
+        ${x.meteo&&x.meteo.zone?`<span class="chip ok">📍 ${esc(x.meteo.zone)}</span>`:x.lat!=null?`<span class="chip ok">📍 Endroit exact</span>`:""}
         <button class="chip ghost" style="cursor:pointer" data-act="open-profile" data-uid="${x.owner}">${esc(pseudo(x.owner))}</button></div>
       ${me?`<div class="row" style="margin-top:8px"><button class="btn sm" data-act="share-catch" data-id="${x.id}">Partager</button><button class="btn sm" data-act="del-catch" data-id="${x.id}">Supprimer</button></div>`:""}
     </div></div>`;
+}
+function updateCatchZone(){
+  const sel=document.getElementById("c-spot");if(!sel)return;const spot=spotById(sel.value),pos=S.catchPos||S.pos,box=document.getElementById("c-exif");
+  if(!spot||!pos||distKm(spot,pos)>3)return;const z=zoneAt(spot,pos);
+  if(z){box.hidden=false;const t=box.dataset.base||box.textContent;box.dataset.base=t;box.textContent=(t?t+" · ":"")+"Zone : "+z.label+(z.num?" (n° "+z.num+")":"")}
 }
 function catchForm(spotId){
   let spots=S.spots.filter(s=>s.statut!=="ban");
@@ -911,16 +1065,18 @@ function catchForm(spotId){
     ${lic.k!=="ok"&&lic.k!=="soon"?`<div class="alert ${lic.k==="none"?"warn":"ban"}">${lic.k==="none"?"Tu n'as pas encore enregistré ta carte de pêche.":esc(lic.t)+"."} <button type="button" class="btn sm" data-tab="licence">Ma carte</button></div>`:""}
     <label class="f">Photo de la prise<input type="file" id="c-photo" accept="image/*" capture="environment"></label>
     <img id="c-prev" alt="" hidden style="border-radius:12px">
+    <div id="c-exif" class="alert info small" hidden></div>
+    <label class="f">Date et heure de la prise<input type="datetime-local" id="c-when" value="${localISO(new Date())}" max="${localISO(new Date())}"></label>
     <label class="f">Spot<select id="c-spot">${spots.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.nom)}${S.pos?" ("+distKm(S.pos,s).toFixed(1)+" km)":""}</option>`).join("")}</select></label>
     ${spots.length?"":`<div class="alert warn">Crée d'abord un spot depuis la carte.</div>`}
-    <label class="row small" style="gap:8px;font-weight:700"><input type="checkbox" id="c-gps" ${S.pos?"checked":""} style="width:auto;min-height:0">Placer la prise à ma position GPS (visible sur la carte des zones)</label>
+    <label class="row small" style="gap:8px;font-weight:700"><input type="checkbox" id="c-gps" ${S.pos?"checked":""} style="width:auto;min-height:0"><span id="c-gps-l">Enregistrer l'endroit exact de la prise (${S.pos?"position du téléphone":"en attente du GPS ou de la photo"})</span></label>
     <label class="f">Espèce<select id="c-esp">${SPECIES.map(s=>`<option value="${s.id}">${s.nom}</option>`).join("")}<option value="autre">Autre</option></select></label>
     <div class="grid2"><label class="f">Taille (cm)<input id="c-taille" type="number" inputmode="decimal" min="0" step="0.5" required></label><label class="f">Poids (kg)<input id="c-poids" type="number" inputmode="decimal" min="0" step="0.05" placeholder="Optionnel"></label></div>
     <label class="f">Leurre utilisé<input id="c-leurre" list="c-lures" placeholder="ex. Shad 10 cm chartreuse"><datalist id="c-lures">${lures.map(g=>`<option value="${esc(g.nom)}">`).join("")}</datalist></label>
     <label class="f">Technique<select id="c-tech"><option>Lancer-ramener</option><option>Verticale</option><option>Drop shot</option><option>Surface</option><option>Float tube</option><option>Pêche au coup</option><option>Carpe (posé)</option><option>Mouche</option></select></label>
     <div class="seg" role="group" aria-label="Relâché ou gardé"><button type="button" data-rel="1" aria-pressed="true">Relâché</button><button type="button" data-rel="0" aria-pressed="false">Gardé</button></div>
     <p class="small" id="c-size-warn" style="margin:0;color:var(--ban);font-weight:700"></p>
-    <p class="small muted" style="margin:0">L'heure et la météo du moment sont ajoutées automatiquement. Les données GPS cachées de la photo sont supprimées. Sans réseau, la prise est gardée sur le téléphone et envoyée plus tard.</p>
+    <p class="small muted" style="margin:0">L'endroit exact, la zone, l'heure, la météo, la lune et la température de l'eau du moment de la prise sont ajoutés automatiquement : l'app s'en sert pour affiner ses conseils. Les données GPS cachées de la photo sont supprimées. Sans réseau, la prise est gardée sur le téléphone et envoyée plus tard.</p>
     <button class="btn primary wide" type="submit" id="c-save" ${spots.length?"":"disabled"}>Enregistrer la prise</button>
   </form></div>`;
 }
@@ -1140,7 +1296,7 @@ document.addEventListener("click",async e=>{
     case "locate":locate(true);break;
     case "waze":{const s=spotById(d.spot);if(s.statut==="ban")openSheet("waze",{id:s.id});else window.open(waze(s),"_blank","noopener");break}
     case "spot-here":{const s=S.tempSpot;closeSheet();openSheet("spotForm",{lat:s.lat,lng:s.lng});break}
-    case "new-catch":locate(false);openSheet("catchForm",{id:d.spot});break;
+    case "new-catch":S.catchPos=null;locate(false);openSheet("catchForm",{id:d.spot});break;
     case "add-spot":S.addMode=true;document.getElementById("map").classList.add("adding");render();window.scrollTo(0,0);toast("Touche la carte pour placer le spot");break;
     case "cancel-add":S.addMode=false;document.getElementById("map").classList.remove("adding");render();break;
     case "add-depth":{const m=document.getElementById("dep-m").value,n=document.getElementById("dep-n").value.trim();if(!m){toast("Indique la profondeur en mètres");break}
@@ -1174,7 +1330,15 @@ async function sendMsg(){const i=document.getElementById("msg-in");const v=i.val
   const {error}=await sb.from("peche_messages").insert({owner:S.user.id,text:v});if(error){toast("Message non envoyé : réessaie");i.value=v}else loadMessages()}
 
 document.addEventListener("change",async e=>{
-  if(e.target.id==="c-photo"&&e.target.files[0]){const b=await compress(e.target.files[0]);S.catchBlob=b;const p=document.getElementById("c-prev");p.src=URL.createObjectURL(b);p.hidden=false}
+  if(e.target.id==="c-photo"&&e.target.files[0]){const file=e.target.files[0];const ex=await readExif(file);const b=await compress(file);S.catchBlob=b;const p=document.getElementById("c-prev");p.src=URL.createObjectURL(b);p.hidden=false;
+    const info=[],box=document.getElementById("c-exif");
+    if(ex&&ex.date&&Date.now()-ex.date<60*dayMs&&ex.date<=new Date()){document.getElementById("c-when").value=localISO(ex.date);info.push("Heure de la photo : "+dateFr(ex.date))}
+    if(ex&&ex.lat!=null){S.catchPos={lat:ex.lat,lng:ex.lng,src:"photo"};const near=S.spots.filter(sp=>sp.statut!=="ban").map(sp=>({sp,d:distKm(sp,S.catchPos)})).sort((a,b)=>a.d-b.d)[0];
+      if(near&&near.d<3){document.getElementById("c-spot").value=near.sp.id;info.push(`Position de la photo : à ${Math.round(near.d*1000)} m de « ${near.sp.nom} »`)}else info.push("Position lue dans la photo (aucun spot du groupe à moins de 3 km)");
+      document.getElementById("c-gps").checked=true;document.getElementById("c-gps-l").textContent="Enregistrer l'endroit exact de la prise (position de la photo)";}
+    updateCatchZone();
+    if(info.length){box.textContent=info.join(" · ");box.hidden=false}}
+  if(e.target.id==="c-spot")updateCatchZone();
   if(e.target.id==="c-esp")sizeWarn();
   if(e.target.id==="sp-photos"&&e.target.files.length){const files=[...e.target.files].slice(0,10),spot=e.target.dataset.spot;toast("Envoi de "+files.length+" photo(s)…");
     try{for(const f of files){const path=await upload(await compress(f,1600,.8));const {error}=await sb.from("peche_spot_photos").insert({spot_id:spot,owner:S.user.id,path});if(error)throw error}
@@ -1199,10 +1363,15 @@ document.addEventListener("submit",async e=>{
     if(f.id==="recovery-form"){const {error}=await sb.auth.updateUser({password:document.getElementById("r-pass").value});if(error)throw error;S.recovery=false;toast("Mot de passe changé");render()}
     if(f.id==="onboard-form"){const {error}=await sb.from("peche_profiles").insert({id:S.user.id,pseudo:v("o-pseudo"),region:v("o-region")||null});if(error)throw error;await startApp()}
     if(f.id==="catch-form"){
-      const spot=spotById(v("c-spot")),now=new Date(),c=conditions(spot,now);
-      const row={owner:S.user.id,spot_id:spot.id,espece:v("c-esp"),taille:+v("c-taille")||null,poids:+v("c-poids")||null,leurre:v("c-leurre")||null,technique:v("c-tech"),relache,caught_at:now.toISOString(),
-        meteo:c?{temp:c.w.temp,press:c.w.press,trend:c.w.trend,wind:c.w.wind,cloud:c.w.cloud,water:c.w.water,moon:c.mo.name}:null};
-      const g=document.getElementById("c-gps");if(g&&g.checked&&S.pos&&distKm(S.pos,spot)<5){row.lat=+S.pos.lat.toFixed(6);row.lng=+S.pos.lng.toFixed(6)}
+      const spot=spotById(v("c-spot")),now=new Date();let when=v("c-when")?new Date(v("c-when")):now;if(!(when<=now))when=now;
+      let w=null;
+      if(now-when<20*36e5){const c=conditions(spot,when);if(c)w=c.w}else{try{w=await histWeather(spot,when)}catch(e){}}
+      const st=sunTimes(when,spot.lat,spot.lng),mo=moon(when);
+      const row={owner:S.user.id,spot_id:spot.id,espece:v("c-esp"),taille:+v("c-taille")||null,poids:+v("c-poids")||null,leurre:v("c-leurre")||null,technique:v("c-tech"),relache,caught_at:when.toISOString(),
+        meteo:Object.assign(w?{temp:w.temp,press:w.press,trend:w.trend,wind:w.wind,cloud:w.cloud,water:w.water,rain:w.rainmm}:{},{moon:mo.name,illum:Math.round(mo.illum*100),mom:momentOf(when,st),hour:when.getHours()+when.getMinutes()/60})};
+      const g=document.getElementById("c-gps"),pos=S.catchPos||S.pos;
+      if(g&&g.checked&&pos&&distKm(pos,spot)<5){row.lat=+pos.lat.toFixed(6);row.lng=+pos.lng.toFixed(6);row.meteo.pos_src=pos.src||"gps";const z=zoneAt(spot,pos);if(z)row.meteo.zone=z.label+(z.num?" (n° "+z.num+")":"")}
+      S.catchPos=null;
       const blob=S.catchBlob;S.catchBlob=null;
       try{
         if(!navigator.onLine)throw new TypeError("offline");
