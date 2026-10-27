@@ -232,7 +232,7 @@ function getWaterBody(lat,lng){
   try{const c=JSON.parse(localStorage.getItem("wb:"+k));if(c){WB[k]=c;return c}}catch(e){}
   WB[k]={loading:true};
   (async()=>{
-    const q=`[out:json][timeout:15];is_in(${lat},${lng})->.a;area.a["natural"="water"];out tags;(way(around:80,${lat},${lng})["waterway"~"^(river|stream|canal|brook|ditch|drain)$"];relation(around:80,${lat},${lng})["waterway"~"^(river|canal)$"];);out tags;way(around:500,${lat},${lng})["natural"="coastline"];out ids;`;
+    const q=`[out:json][timeout:15];is_in(${lat},${lng})->.a;area.a["natural"="water"];out tags;(way(around:35,${lat},${lng})["waterway"~"^(river|stream|canal|brook|ditch|drain)$"];relation(around:35,${lat},${lng})["waterway"~"^(river|canal)$"];);out tags;way(around:150,${lat},${lng})["natural"="coastline"];out ids;`;
     let res={k:null};
     try{
       const j=await fetchJSON("https://overpass-api.de/api/interpreter?data="+encodeURIComponent(q),15000);
@@ -356,6 +356,7 @@ function autoZoneSpecies(z,spot,c,now){
   if(z.ban||!c)return [];
   return speciesFor(spot,now,c).filter(x=>!x.closed).map(x=>{const hit=x.micro.filter(m=>z.micro.includes(m)).length;return {x,sc:x.a*(hit?Math.min(1,.75+.15*hit):.3)}}).sort((a,b)=>b.sc-a.sc).slice(0,3);
 }
+function waitWater(lat,lng){return new Promise(res=>{const t0=Date.now();(function chk(){const w=getWaterBody(lat,lng);if(!w.loading||Date.now()-t0>16000)return res(w);setTimeout(chk,250)})()})}
 function weatherAt(spot,d){
   const W=getWx(spot.lat,spot.lng);
   if(!W.hours)return null;
@@ -568,11 +569,20 @@ function initMap(){
   spotLayer=L.layerGroup().addTo(map);
   map.on("click",e=>{
     const {lat,lng}=e.latlng;
-    if(S.addMode){S.addMode=false;document.getElementById("map").classList.remove("adding");openSheet("spotForm",{lat:+lat.toFixed(5),lng:+lng.toFixed(5)});render();return}
-    S.tempSpot={id:"temp",nom:"Point sélectionné",type:"riviere",lat:+lat.toFixed(5),lng:+lng.toFixed(5),statut:"ok",float:"unk",cat:"2",temp:true};
+    if(S.addMode){S.addMode=false;document.getElementById("map").classList.remove("adding");openSheet("spotForm",{lat:+lat.toFixed(5),lng:+lng.toFixed(5)});render();
+      waitWater(+lat.toFixed(5),+lng.toFixed(5)).then(w=>{if(!w.error&&!w.k)toast("Attention : ce point n'est pas sur l'eau. Place le spot au bord ou sur l'eau.")});return}
+    const la=+lat.toFixed(5),ln=+lng.toFixed(5),req=Symbol();map._waterReq=req;
     if(tempMarker)tempMarker.remove();
-    tempMarker=L.circleMarker([lat,lng],{radius:9,color:"#fff",weight:3,fillColor:"#16231C",fillOpacity:1}).addTo(map);
-    openSheet("spot",{id:"temp"});
+    tempMarker=L.circleMarker([lat,lng],{radius:9,color:"#fff",weight:3,fillColor:"#8A968E",fillOpacity:1}).addTo(map);
+    const pending=getWaterBody(la,ln);if(pending.loading)toast("Recherche du point d'eau…");
+    waitWater(la,ln).then(w=>{
+      if(map._waterReq!==req)return;
+      if(w.error){toast("Vérification impossible (réseau) : touche à nouveau l'eau dans un instant");if(tempMarker){tempMarker.remove();tempMarker=null}return}
+      if(!w.k){toast("Pas de point d'eau ici : touche directement la rivière ou l'étang");if(tempMarker){tempMarker.remove();tempMarker=null}return}
+      tempMarker.setStyle({fillColor:"#16231C"});
+      S.tempSpot={id:"temp",nom:w.name||"Point d'eau sélectionné",type:w.k==="mer"?"mer":["etang","lac"].includes(w.k)?"etang":"riviere",lat:la,lng:ln,statut:"ok",float:"unk",cat:"2",temp:true};
+      openSheet("spot",{id:"temp"});
+    });
   });
   drawSpots();
 }
@@ -788,6 +798,7 @@ function spotSheet(id){
     <div class="panel" style="margin-top:12px"><div class="ttl"><span class="lbl">Float tube</span><span class="chip ${f.c}">${f.t}</span></div>
       <p class="small" style="margin:8px 0 4px">${esc(s.float_note||"Non renseigné")}</p>
       <p class="small muted" style="margin:0 0 8px"><b>Mise à l'eau :</b> ${esc(s.mise_eau||"À vérifier")}</p>
+      ${!s.temp&&s.owner===S.user.id?`<button class="btn sm" style="margin-bottom:8px" data-act="edit-spot" data-spot="${s.id}">Indiquer si le float tube est autorisé</button>`:!s.temp?`<p class="small muted" style="margin:0 0 8px">Seul l'auteur du spot peut le modifier. Une erreur ? Utilise « Signaler » en bas de la fiche.</p>`:""}
       <p class="small muted" style="margin:0">Règles habituelles : gilet de sauvetage obligatoire, pas de float tube dans les écluses ni dans le chenal de navigation. Chaque fédération ou gestionnaire peut l'interdire sur certains parcours.</p></div>
     <div class="panel" style="margin-top:12px"><div class="ttl"><span class="lbl">Carte de pêche</span><span class="chip ${lic.c}">${esc(lic.t)}</span></div>
       <p class="small" style="margin:8px 0 10px">En eau douce, une carte AAPPMA est obligatoire. En étang privé, il faut l'accord du propriétaire. En mer, pas de carte pour la pêche de loisir, mais tailles minimales et marquage des prises obligatoires.</p>
@@ -812,7 +823,7 @@ function spotSheet(id){
       </div>
       <div class="seg" style="margin:16px 0" role="group">${tabs.map(([k,t])=>`<button data-spottab="${k}" aria-pressed="${k===sub}">${t}</button>`).join("")}</div>
       ${body}
-      ${!s.temp&&s.owner===S.user.id?`<button class="btn wide" style="margin-top:20px" data-act="del-spot" data-spot="${s.id}">Supprimer ce spot</button>`:""}
+      ${!s.temp&&s.owner===S.user.id?`<button class="btn primary wide" style="margin-top:20px" data-act="edit-spot" data-spot="${s.id}">Modifier le spot (float tube, statut, profondeurs…)</button><button class="btn wide" style="margin-top:12px" data-act="del-spot" data-spot="${s.id}">Supprimer ce spot</button>`:""}
       ${s.temp?"":`<button class="btn wide" style="margin-top:12px" data-act="report" data-spot="${s.id}">Signaler une erreur ou une interdiction</button>`}
     </div></div>`;
 }
@@ -869,24 +880,28 @@ function catchForm(spotId){
     <button class="btn primary wide" type="submit" id="c-save" ${spots.length?"":"disabled"}>Enregistrer la prise</button>
   </form></div>`;
 }
-function spotForm(lat,lng){
-  return `<div class="sheet" role="dialog"><div class="bar"><button class="btn sm" data-act="close">←</button><span class="t">Nouveau spot</span></div>
-  <form class="wrap stack" id="spot-form" style="padding-top:16px" data-lat="${lat}" data-lng="${lng}">
+function spotForm(lat,lng,ed){
+  const e=ed||{},wb=getWaterBody(lat,lng),k=e.milieu||(wb&&wb.k),opt=(v,cur)=>v===cur?"selected":"";
+  return `<div class="sheet" role="dialog"><div class="bar"><button class="btn sm" data-act="${ed?"back-spot":"close"}" ${ed?`data-spot="${ed.id}"`:""}>←</button><span class="t">${ed?"Modifier le spot":"Nouveau spot"}</span></div>
+  <form class="wrap stack" id="spot-form" style="padding-top:16px" data-lat="${lat}" data-lng="${lng}" ${ed?`data-id="${ed.id}"`:""}>
     <p class="small muted num" style="margin:0">Position : ${lat}, ${lng}</p>
-    <label class="f">Nom du spot<input id="s-nom" required maxlength="80" placeholder="ex. Le coin des nénuphars" value="${esc((getWaterBody(lat,lng)||{}).name||"")}"></label>
-    <div class="grid2"><label class="f">Type<select id="s-type"><option value="riviere">Cours d'eau</option><option value="etang">Plan d'eau / étang</option><option value="mer">Côte / mer</option></select></label>
-    <label class="f">Catégorie<select id="s-cat"><option value="2">2e catégorie</option><option value="1">1re catégorie</option></select></label></div>
-    ${(()=>{const wb=getWaterBody(lat,lng),k=wb&&wb.k;return `<label class="f">Milieu${k?" (reconnu : "+MILIEU[k].toLowerCase()+(wb.name?", "+esc(wb.name):"")+")":""}<select id="s-milieu"><option value="">Je ne sais pas</option>${Object.entries(MILIEU).map(([v,t])=>`<option value="${v}" ${v===k?"selected":""}>${t}</option>`).join("")}</select></label><input type="hidden" id="s-nomeau" value="${esc(wb&&wb.name||"")}">`})()}
-    <label class="f">Statut de pêche<select id="s-statut"><option value="ok">Autorisé</option><option value="warn">Restrictions</option><option value="ban">Interdit</option></select></label>
-    <label class="f">Raison (restriction ou interdiction)<input id="s-raison" placeholder="ex. Réserve de pêche, frayère, no-kill"></label>
-    <label class="f">Autorisation nécessaire<input id="s-carte" placeholder="ex. Carte AAPPMA, accord du propriétaire"></label>
-    <div class="grid2"><label class="f">Float tube<select id="s-float"><option value="unk">À vérifier</option><option value="ok">Autorisé</option><option value="cond">Sous conditions</option><option value="ban">Interdit</option></select></label>
-    <label class="f">Mise à l'eau / accès<input id="s-mise" placeholder="ex. Cale près du parking"></label></div>
-    <label class="f">Conditions float tube<input id="s-fnote" placeholder="ex. Gilet obligatoire, hors chenal"></label>
-    <label class="f">Profondeurs connues<input id="s-prof" placeholder="ex. 1 à 3 m, fosse à 5 m"></label>
-    <label class="f">Fond<input id="s-fond" placeholder="ex. Vase, herbiers"></label>
-    <label class="f">Visibilité<select id="s-vis"><option value="public">Visible par le groupe</option><option value="prive">Privé (moi seul)</option></select></label>
-    <button class="btn primary wide" type="submit">Créer le spot</button>
+    <label class="f">Nom du spot<input id="s-nom" required maxlength="80" placeholder="ex. Le coin des nénuphars" value="${esc(e.nom||(wb&&wb.name)||"")}"></label>
+    <fieldset class="panel stack" style="margin:0;border-color:var(--accent)"><legend class="lbl">Float tube</legend>
+      <div class="seg" role="group" aria-label="Float tube">${[["ok","Autorisé"],["cond","Sous conditions"],["ban","Interdit"],["unk","À vérifier"]].map(([v,t])=>`<button type="button" data-float="${v}" aria-pressed="${(e.float||"unk")===v}">${t}</button>`).join("")}</div>
+      <input type="hidden" id="s-float" value="${esc(e.float||"unk")}">
+      <label class="f">Conditions<input id="s-fnote" value="${esc(e.float_note||"")}" placeholder="ex. Gilet obligatoire, hors chenal, de jour"></label>
+      <label class="f">Mise à l'eau / accès<input id="s-mise" value="${esc(e.mise_eau||"")}" placeholder="ex. Cale près du parking"></label>
+    </fieldset>
+    <div class="grid2"><label class="f">Type<select id="s-type"><option value="riviere" ${opt("riviere",e.type)}>Cours d'eau</option><option value="etang" ${opt("etang",e.type)}>Plan d'eau / étang</option><option value="mer" ${opt("mer",e.type)}>Côte / mer</option></select></label>
+    <label class="f">Catégorie<select id="s-cat"><option value="2" ${opt("2",e.cat)}>2e catégorie</option><option value="1" ${opt("1",e.cat)}>1re catégorie</option></select></label></div>
+    <label class="f">Milieu${!ed&&wb&&wb.k?" (reconnu : "+MILIEU[wb.k].toLowerCase()+(wb.name?", "+esc(wb.name):"")+")":""}<select id="s-milieu"><option value="">Je ne sais pas</option>${Object.entries(MILIEU).map(([v,t])=>`<option value="${v}" ${v===k?"selected":""}>${t}</option>`).join("")}</select></label><input type="hidden" id="s-nomeau" value="${esc(e.nom_eau||(wb&&wb.name)||"")}">
+    <label class="f">Statut de pêche<select id="s-statut"><option value="ok" ${opt("ok",e.statut)}>Autorisé</option><option value="warn" ${opt("warn",e.statut)}>Restrictions</option><option value="ban" ${opt("ban",e.statut)}>Interdit</option></select></label>
+    <label class="f">Raison (restriction ou interdiction)<input id="s-raison" value="${esc(e.raison||"")}" placeholder="ex. Réserve de pêche, frayère, no-kill"></label>
+    <label class="f">Autorisation nécessaire<input id="s-carte" value="${esc(e.carte||"")}" placeholder="ex. Carte AAPPMA, accord du propriétaire"></label>
+    <label class="f">Profondeurs connues<input id="s-prof" value="${esc(e.prof||"")}" placeholder="ex. 1 à 3 m, fosse à 5 m"></label>
+    <label class="f">Fond<input id="s-fond" value="${esc(e.fond||"")}" placeholder="ex. Vase, herbiers"></label>
+    <label class="f">Visibilité<select id="s-vis"><option value="public">Visible par le groupe</option><option value="prive" ${e.prive?"selected":""}>Privé (moi seul)</option></select></label>
+    <button class="btn primary wide" type="submit">${ed?"Enregistrer les modifications":"Créer le spot"}</button>
   </form></div>`;
 }
 function stats(list){
@@ -1045,7 +1060,7 @@ function renderSheet(force){
   const {type,arg}=S.sheet;
   if(type==="zoneForm"){if(!force)return;el.innerHTML=zoneForm(arg);return}
   if(type==="catchForm"||type==="spotForm"||type==="report"){if(!force)return;
-    el.innerHTML=type==="catchForm"?catchForm(arg&&arg.id):type==="spotForm"?spotForm(arg.lat,arg.lng):reportForm(arg.id);relache=true;return}
+    el.innerHTML=type==="catchForm"?catchForm(arg&&arg.id):type==="spotForm"?spotForm(arg.lat,arg.lng,arg.edit?spotById(arg.edit):null):reportForm(arg.id);relache=true;return}
   const ae=document.activeElement;if(ae&&el.contains(ae)&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName))return;
   let key=type+"|"+(arg&&arg.id)+"|"+S.spotTab+"|"+S.zoneAdd;
   if(type==="spot"&&S.spotTab==="zones"){const sp=spotById(arg.id);if(sp){const A=getAutoZones(sp);key+="|"+(A.loading?"L":A.error?"E":A.zones.length)+"|"+(conditions(sp,new Date())?1:0)+"|"+S.zones.length}}
@@ -1061,7 +1076,7 @@ function renderSheet(force){
 /* ================= Actions ================= */
 let relache=true;
 document.addEventListener("click",async e=>{
-  const t=e.target.closest("[data-zl],[data-tab],[data-act],[data-spot],[data-spottab],[data-filter],[data-rel],[data-auth],[data-base],[data-layer]");
+  const t=e.target.closest("[data-float],[data-zl],[data-tab],[data-act],[data-spot],[data-spottab],[data-filter],[data-rel],[data-auth],[data-base],[data-layer]");
   if(!t||t.disabled)return;
   const d=t.dataset;
   if(d.auth){S.authMode=d.auth;render();return}
@@ -1071,6 +1086,7 @@ document.addEventListener("click",async e=>{
   if(d.filter){S.catchFilter=d.filter;render();return}
   if(d.rel){relache=d.rel==="1";document.querySelectorAll("[data-rel]").forEach(b=>b.setAttribute("aria-pressed",b===t));return}
   if(d.spottab){S.spotTab=d.spottab;renderSheet();return}
+  if(d.float){document.getElementById("s-float").value=d.float;document.querySelectorAll("[data-float]").forEach(b=>b.setAttribute("aria-pressed",b===t));S.formTouched=true;return}
   if(d.zl){S.zl[d.zl]=!S.zl[d.zl];renderSheet(true);return}
   if(!d.act&&d.spot){openSheet("spot",{id:d.spot});return}
   try{switch(d.act){
@@ -1093,6 +1109,7 @@ document.addEventListener("click",async e=>{
     case "del-gear":{const g=(S.gear[S.user.id]||[]).find(x=>x.id===d.id);await sb.from("peche_gear").delete().eq("id",d.id);if(g&&g.photo_path)sb.storage.from("peche-photos").remove([g.photo_path]);await loadGear(S.user.id);toast("Matériel supprimé");break}
     case "del-spot":{const {error}=await sb.from("peche_spots").delete().eq("id",d.spot);if(error)throw error;closeSheet();await loadSpots();toast("Spot supprimé");break}
     case "report":openSheet("report",{id:d.spot});break;
+    case "edit-spot":{const sp=spotById(d.spot);openSheet("spotForm",{lat:sp.lat,lng:sp.lng,edit:sp.id});break}
     case "zone-add":S.zoneAdd=true;renderSheet(true);toast("Touche la carte à l'endroit de la zone");break;
     case "zone-cancel":S.zoneAdd=false;renderSheet(true);break;
     case "zone-back":S.spotTab="zones";S.sheet={type:"spot",arg:{id:d.spot}};renderSheet(true);break;
@@ -1152,9 +1169,10 @@ document.addEventListener("submit",async e=>{
       closeSheet();S.tab="prises";render();
     }
     if(f.id==="spot-form"){
-      const {error}=await sb.from("peche_spots").insert({owner:S.user.id,nom:v("s-nom"),type:(["etang","lac"].includes(v("s-milieu"))&&v("s-type")==="riviere")?"etang":(v("s-milieu")==="mer"?"mer":v("s-type")),cat:v("s-cat"),statut:v("s-statut"),raison:v("s-raison")||null,carte:v("s-carte")||null,
-        float:v("s-float"),milieu:v("s-milieu")||null,nom_eau:v("s-nomeau")||null,mise_eau:v("s-mise")||null,float_note:v("s-fnote")||null,prof:v("s-prof")||null,fond:v("s-fond")||null,lat:+f.dataset.lat,lng:+f.dataset.lng,prive:v("s-vis")==="prive"});
-      if(error)throw error;closeSheet();await loadSpots();toast("Spot créé");
+      const row={nom:v("s-nom"),type:(["etang","lac"].includes(v("s-milieu"))&&v("s-type")==="riviere")?"etang":(v("s-milieu")==="mer"?"mer":v("s-type")),cat:v("s-cat"),statut:v("s-statut"),raison:v("s-raison")||null,carte:v("s-carte")||null,
+        float:v("s-float"),milieu:v("s-milieu")||null,nom_eau:v("s-nomeau")||null,mise_eau:v("s-mise")||null,float_note:v("s-fnote")||null,prof:v("s-prof")||null,fond:v("s-fond")||null,lat:+f.dataset.lat,lng:+f.dataset.lng,prive:v("s-vis")==="prive"};
+      if(f.dataset.id){const {error}=await sb.from("peche_spots").update(row).eq("id",f.dataset.id);if(error)throw error;await loadSpots();S.spotTab="regle";openSheet("spot",{id:f.dataset.id});toast("Spot modifié")}
+      else{const {error}=await sb.from("peche_spots").insert({...row,owner:S.user.id});if(error)throw error;closeSheet();await loadSpots();toast("Spot créé")}
     }
     if(f.id==="zone-form"){
       const esp=[...f.querySelectorAll('input[name="z-esp"]:checked')].map(x=>x.value),mn=v("z-min"),mx=v("z-max");
