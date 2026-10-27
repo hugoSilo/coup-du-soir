@@ -228,7 +228,7 @@ function getWater(lat,lng){
 const WB={};
 const OVERPASS=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter","https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
 async function overpass(q,ms){
-  let last;for(const url of OVERPASS){try{return await fetchJSON(url,ms||20000,"data="+encodeURIComponent(q))}catch(e){last=e}}
+  let last;for(const url of OVERPASS){try{return await fetchJSON(url,ms||9000,"data="+encodeURIComponent(q))}catch(e){last=e}}
   throw last||new Error("overpass");
 }
 function getWaterBody(lat,lng){
@@ -371,6 +371,32 @@ function pip(poly,p){let c=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++
 function autoZoneSpecies(z,spot,c,now){
   if(z.ban||!c)return [];
   return speciesFor(spot,now,c).filter(x=>!x.closed).map(x=>{const hit=x.micro.filter(m=>z.micro.includes(m)).length;return {x,sc:x.a*(hit?Math.min(1,.75+.15*hit):.3)}}).sort((a,b)=>b.sc-a.sc).slice(0,3);
+}
+const WPX={};
+function waterPixel(lat,lng){
+  const k=lat.toFixed(5)+","+lng.toFixed(5);if(WPX[k]!==undefined)return Promise.resolve(WPX[k]);
+  return new Promise(res=>{
+    const z=17,n=2**z,xt=(lng+180)/360*n,yt=(1-Math.log(Math.tan(lat*rad)+1/Math.cos(lat*rad))/PI)/2*n;
+    const X=Math.floor(xt),Y=Math.floor(yt),px=Math.floor((xt-X)*256),py=Math.floor((yt-Y)*256);
+    const i=new Image();i.crossOrigin="anonymous";
+    const done=v=>{clearTimeout(t);WPX[k]=v;res(v)},t=setTimeout(()=>done(null),6000);
+    i.onerror=()=>done(null);
+    i.onload=()=>{try{const c=document.createElement("canvas");c.width=c.height=256;const g=c.getContext("2d");g.drawImage(i,0,0);
+      const R=14,x0=Math.max(0,px-R),y0=Math.max(0,py-R),w=Math.min(256,px+R+1)-x0,h=Math.min(256,py+R+1)-y0,d=g.getImageData(x0,y0,w,h).data;
+      let hit=0;for(let j=0;j<d.length;j+=4){if(Math.abs(d[j]-170)<=8&&Math.abs(d[j+1]-211)<=8&&Math.abs(d[j+2]-223)<=8)hit++}
+      done(hit>=6)}catch(e){done(null)}};
+    i.src=`https://tile.openstreetmap.org/${z}/${X}/${Y}.png`;
+  });
+}
+// Décision : true = eau, false = terre, null = impossible à vérifier
+async function isWater(lat,lng){
+  const pxv=await waterPixel(lat,lng);
+  if(pxv===true)return true;
+  const w=await waitWater(lat,lng);
+  if(w.k)return true;
+  if(pxv===false&&!w.error)return false;
+  if(pxv===false&&w.error)return false;
+  return w.error?null:false;
 }
 function waitWater(lat,lng){return new Promise(res=>{const t0=Date.now();(function chk(){const w=getWaterBody(lat,lng);if(!w.loading||Date.now()-t0>16000)return res(w);setTimeout(chk,250)})()})}
 function weatherAt(spot,d){
@@ -586,16 +612,17 @@ function initMap(){
   map.on("click",e=>{
     const {lat,lng}=e.latlng;
     if(S.addMode){S.addMode=false;document.getElementById("map").classList.remove("adding");openSheet("spotForm",{lat:+lat.toFixed(5),lng:+lng.toFixed(5)});render();
-      waitWater(+lat.toFixed(5),+lng.toFixed(5)).then(w=>{if(!w.error&&!w.k)toast("Attention : ce point n'est pas sur l'eau. Place le spot au bord ou sur l'eau.")});return}
+      isWater(+lat.toFixed(5),+lng.toFixed(5)).then(ok=>{if(ok===false)toast("Attention : ce point n'est pas sur l'eau. Place le spot au bord ou sur l'eau.")});return}
     const la=+lat.toFixed(5),ln=+lng.toFixed(5),req=Symbol();map._waterReq=req;
     if(tempMarker)tempMarker.remove();
     tempMarker=L.circleMarker([lat,lng],{radius:9,color:"#fff",weight:3,fillColor:"#8A968E",fillOpacity:1}).addTo(map);
-    const pending=getWaterBody(la,ln);if(pending.loading)toast("Recherche du point d'eau…");
-    waitWater(la,ln).then(w=>{
+    getWaterBody(la,ln);
+    isWater(la,ln).then(ok=>{
       if(map._waterReq!==req)return;
-      if(w.error){toast("Service de reconnaissance occupé : touche à nouveau l'eau dans quelques secondes");if(tempMarker){tempMarker.remove();tempMarker=null}return}
-      if(!w.k){toast("Pas de point d'eau ici : touche directement la rivière ou l'étang");if(tempMarker){tempMarker.remove();tempMarker=null}return}
+      if(ok===false){toast("Pas de point d'eau ici : touche directement la rivière ou l'étang");if(tempMarker){tempMarker.remove();tempMarker=null}return}
+      if(ok===null)toast("Vérification impossible pour l'instant : choisis le type de point d'eau dans la fiche");
       tempMarker.setStyle({fillColor:"#16231C"});
+      const w=getWaterBody(la,ln);
       S.tempSpot={id:"temp",nom:w.name||"Point d'eau sélectionné",type:w.k==="mer"?"mer":["etang","lac"].includes(w.k)?"etang":"riviere",lat:la,lng:ln,statut:"ok",float:"unk",cat:"2",temp:true};
       openSheet("spot",{id:"temp"});
     });
@@ -830,7 +857,7 @@ function spotSheet(id){
     <div class="bar"><button class="btn sm" data-act="close" aria-label="Fermer">←</button><span class="t">${esc(s.nom)}</span>${s.temp?"":`<span class="chip ${st.c}">${st.t}</span>`}</div>
     <div class="wrap" style="padding-top:14px">
       ${(()=>{const mi=milieuOf(s),wb=getWaterBody(s.lat,s.lng);const nm=s.nom_eau||(wb&&wb.name)||"";
-        return `<div class="row" style="margin-bottom:8px;gap:6px">${mi.k?`<span class="chip ok">${MILIEU[mi.k]}${nm?" · "+esc(nm):""}</span><span class="small muted">${mi.src==="auto"?"reconnu automatiquement":mi.src==="fiche"?"d'après la fiche":"d'après le type"}</span>`:wb&&wb.loading?`<span class="chip ghost">Reconnaissance du point d'eau…</span>`:wb&&wb.error?`<span class="chip warn">Reconnaissance impossible pour l'instant</span><button class="btn sm" data-act="wb-retry" data-spot="${s.id}">Réessayer</button>`:`<span class="chip warn">Milieu non reconnu</span><span class="small muted">${s.temp?"touche plus près de l'eau":s.owner===S.user.id?"précise-le avec « Modifier le spot »":"l'auteur du spot peut le préciser"}</span>`}</div>`})()}
+        return `<div class="row" style="margin-bottom:8px;gap:6px">${mi.k?`<span class="chip ok">${MILIEU[mi.k]}${nm?" · "+esc(nm):""}</span><span class="small muted">${mi.src==="auto"?"reconnu automatiquement":mi.src==="fiche"?"d'après la fiche":"d'après le type"}</span>`:wb&&wb.loading?`<span class="chip ghost">Reconnaissance du point d'eau…</span>`:s.temp?`<span class="chip warn">Type de point d'eau inconnu</span></div><div class="row" style="gap:6px;margin-bottom:8px"><span class="small muted">C'est :</span>${Object.entries(MILIEU).map(([v,t])=>`<button class="chip ghost" style="cursor:pointer" data-milieu="${v}">${t}</button>`).join("")}${wb&&wb.error?`<button class="chip ghost" style="cursor:pointer" data-act="wb-retry" data-spot="${s.id}">↻ Réessayer</button>`:""}`:wb&&wb.error?`<span class="chip warn">Reconnaissance impossible pour l'instant</span><button class="btn sm" data-act="wb-retry" data-spot="${s.id}">Réessayer</button>`:`<span class="chip warn">Milieu non reconnu</span><span class="small muted">${s.temp?"touche plus près de l'eau":s.owner===S.user.id?"précise-le avec « Modifier le spot »":"l'auteur du spot peut le préciser"}</span>`}</div>`})()}
       <div class="small muted" style="margin-bottom:10px">${s.type==="etang"?"Plan d'eau":s.type==="mer"?"Côte":"Cours d'eau"} · <span class="num">${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}</span>${S.pos?` · <span class="num">${distKm(S.pos,s).toFixed(1)} km</span>`:""}${s.exemple?" · exemple":""}${s.prive?" · privé":""}${s.owner&&!s.exemple?" · ajouté par "+esc(pseudo(s.owner)):""}</div>
       <div class="grid2">
         <button class="btn primary" data-act="waze" data-spot="${s.id}">Y aller avec Waze</button>
@@ -1092,7 +1119,7 @@ function renderSheet(force){
 /* ================= Actions ================= */
 let relache=true;
 document.addEventListener("click",async e=>{
-  const t=e.target.closest("[data-float],[data-zl],[data-tab],[data-act],[data-spot],[data-spottab],[data-filter],[data-rel],[data-auth],[data-base],[data-layer]");
+  const t=e.target.closest("[data-milieu],[data-float],[data-zl],[data-tab],[data-act],[data-spot],[data-spottab],[data-filter],[data-rel],[data-auth],[data-base],[data-layer]");
   if(!t||t.disabled)return;
   const d=t.dataset;
   if(d.auth){S.authMode=d.auth;render();return}
@@ -1102,6 +1129,7 @@ document.addEventListener("click",async e=>{
   if(d.filter){S.catchFilter=d.filter;render();return}
   if(d.rel){relache=d.rel==="1";document.querySelectorAll("[data-rel]").forEach(b=>b.setAttribute("aria-pressed",b===t));return}
   if(d.spottab){S.spotTab=d.spottab;renderSheet();return}
+  if(d.milieu&&S.tempSpot){S.tempSpot.milieu=d.milieu;S.tempSpot.type=d.milieu==="mer"?"mer":["etang","lac"].includes(d.milieu)?"etang":"riviere";renderSheet(true);return}
   if(d.float){document.getElementById("s-float").value=d.float;document.querySelectorAll("[data-float]").forEach(b=>b.setAttribute("aria-pressed",b===t));S.formTouched=true;return}
   if(d.zl){S.zl[d.zl]=!S.zl[d.zl];renderSheet(true);return}
   if(!d.act&&d.spot){openSheet("spot",{id:d.spot});return}
