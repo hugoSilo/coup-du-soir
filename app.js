@@ -1143,8 +1143,9 @@ const FEDES={"35":{nom:"Fédération d'Ille-et-Vilaine pour la pêche",site:"htt
 const FNPF_ANNUAIRE="https://www.federationpeche.fr/116-fd.htm";
 const DEPTS={"ain":"01","aisne":"02","allier":"03","ardeche":"07","ardennes":"08","ariege":"09","aube":"10","aude":"11","aveyron":"12","calvados":"14","cantal":"15","charente":"16","cher":"18","correze":"19","cote-d'or":"21","cotes-d'armor":"22","creuse":"23","dordogne":"24","doubs":"25","drome":"26","eure":"27","finistere":"29","gard":"30","gers":"32","gironde":"33","herault":"34","ille-et-vilaine":"35","indre":"36","isere":"38","jura":"39","landes":"40","loire":"42","loire-atlantique":"44","loiret":"45","lot":"46","maine-et-loire":"49","manche":"50","marne":"51","mayenne":"53","morbihan":"56","nord":"59","oise":"60","orne":"61","sarthe":"72","vendee":"85","vienne":"86","vosges":"88","yonne":"89"};
 const norm=t=>String(t||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\s+/g,"-");
-function fedeOf(text){
-  const t=String(text||"").replace(/\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/g," ");
+function fedeOf(text,namesOnly){
+  const t0=String(text||"");if(namesOnly){const n=norm(t0);const hit=Object.keys(DEPTS).sort((a,b)=>b.length-a.length).find(k=>new RegExp("(^|[^a-z'])"+k.replace(/[-']/g,"[-' ]")+"($|[^a-z])").test(n));return hit?{dep:DEPTS[hit],...(FEDES[DEPTS[hit]]||{})}:null}
+  const t=t0.replace(/\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/g," ");
   let d=(t.match(/(?:\bFD\s*|\bf[ée]d[ée]ration[^\n\d]{0,40}|\()(0[1-9]|[1-8]\d|9[0-5]|2[AB])\b/i)||t.match(/(?<![\d\-\/.])\b(0[1-9]|[1-8]\d|9[0-5]|2[AB])\b(?![\d\-\/.])/)||[])[1];
   if(!d){const n=norm(t);const hit=Object.keys(DEPTS).sort((a,b)=>b.length-a.length).find(k=>new RegExp("(^|[^a-z'])"+k.replace(/[-']/g,"[-' ]")+"($|[^a-z])").test(n));if(hit)d=DEPTS[hit]}
   return d?{dep:d,...(FEDES[d]||{})}:null;
@@ -1177,55 +1178,95 @@ async function readLicenceFile(file,onStep){
     await loadScript("vendor/pdf/pdf.min.js");pdfjsLib.GlobalWorkerOptions.workerSrc=absUrl("vendor/pdf/pdf.worker.min.js");
     const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;
     for(let i=1;i<=Math.min(pdf.numPages,2);i++){const pg=await pdf.getPage(i),tc=await pg.getTextContent();
-      const rows={};tc.items.forEach(it=>{const y=Math.round(it.transform[5]/3);(rows[y]=rows[y]||[]).push(it)});
-      text+=Object.keys(rows).sort((a,b)=>b-a).map(y=>rows[y].sort((a,b)=>a.transform[4]-b.transform[4]).map(it=>it.str).join(" ")).join("\n")+"\n"}
+      for(const flip of [false,true]){
+        const rows={};tc.items.filter(it=>it.str.trim()&&((it.transform[0]<0||it.transform[3]<0)===flip)).forEach(it=>{const y=Math.round(it.transform[5]/3);(rows[y]=rows[y]||[]).push(it)});
+        text+=Object.keys(rows).map(Number).sort((a,b)=>flip?a-b:b-a).map(y=>{const its=rows[y].sort((a,b)=>flip?b.transform[4]-a.transform[4]:a.transform[4]-b.transform[4]);
+          const segs=[[its[0]]];for(let k=1;k<its.length;k++){const pv=its[k-1],it=its[k],fs=Math.abs(pv.transform[0])||8,end=flip?pv.transform[4]-(pv.width||0):pv.transform[4]+(pv.width||0),gap=flip?end-it.transform[4]:it.transform[4]-end;
+            if(gap>fs*2.5)segs.push([it]);else segs[segs.length-1].push(it)}
+          return segs.map(sg=>sg.map(it=>it.str.trim()).join(" ")).join("\n")}).join("\n")+"\n"}}
     const pg=await pdf.getPage(1),vp=pg.getViewport({scale:2}),cv=document.createElement("canvas");cv.width=vp.width;cv.height=vp.height;
     await pg.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise;
     image=await new Promise(r=>cv.toBlob(r,"image/jpeg",.85));
-    if(text.replace(/\s/g,"").length<40){onStep&&onStep("PDF scanné : lecture du texte de l'image…");text=await ocrCanvasOrBlob(cv,p=>onStep&&onStep("Lecture du texte… "+p+" %"))}
+    if(text.replace(/\s/g,"").length<40){onStep&&onStep("PDF scanné : lecture du texte de l'image…");text=await ocrCanvasOrBlob(cv,p=>onStep&&onStep("Lecture du texte… "+Math.round(p/2)+" %"));
+      const c2=document.createElement("canvas");c2.width=cv.width;c2.height=cv.height;const g2=c2.getContext("2d");g2.translate(c2.width,c2.height);g2.rotate(Math.PI);g2.drawImage(cv,0,0);
+      text+="\n"+await ocrCanvasOrBlob(c2,p=>onStep&&onStep("Lecture du texte… "+(50+Math.round(p/2))+" %"))}
   }else{
     image=await compress(file,1600,.85);
     onStep&&onStep("Lecture du texte de l'image…");
-    const big=await compress(file,2200,.92);
-    text=await ocrCanvasOrBlob(big,p=>onStep&&onStep("Lecture du texte… "+p+" %"));
+    const big=await compress(file,2400,.92);
+    text=await ocrCanvasOrBlob(big,p=>onStep&&onStep("Lecture du texte… "+Math.round(p/2)+" %"));
+    const bmp=await createImageBitmap(big),cv=document.createElement("canvas");cv.width=bmp.width;cv.height=bmp.height;const g=cv.getContext("2d");g.translate(cv.width,cv.height);g.rotate(Math.PI);g.drawImage(bmp,0,0);
+    text+="\n"+await ocrCanvasOrBlob(cv,p=>onStep&&onStep("Lecture du texte… "+(50+Math.round(p/2))+" %"));
   }
   return {text,image,fields:parseLicence(text)};
 }
 function parseLicence(raw){
-  const t=String(raw||"").replace(/\r/g,"").replace(/[|]/g," ").replace(/[ \t]+/g," "),lines=t.split("\n").map(l=>l.trim()).filter(Boolean),flat=lines.join("\n"),low=norm(flat).replace(/-/g," ");
-  const out={};
-  const after=(re)=>{for(let i=0;i<lines.length;i++){const m=lines[i].match(re);if(m){const rest=lines[i].slice(m.index+m[0].length).replace(/^[\s:.\-–]+/,"").trim();if(rest.length>1)return rest;if(lines[i+1])return lines[i+1]}}return ""};
+  const t=String(raw||"").replace(/\r/g,"").replace(/[|]/g," ").replace(/[ \t]+/g," ");
+  const lines=t.split("\n").map(l=>l.trim()).filter(Boolean),flat=lines.join("\n");
+  const out={},junk=l=>/(https?:|www\.|@|\.fr\b|\.com\b|copyright|tcpdf|powered)/i.test(l);
+  const phone=/(?:\+33\s?|0)[1-9](?:[\s.]?\d{2}){4}/g;
   const iso=(d,m,y)=>{y=+y<100?2000+ +y:+y;return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`};
-  const dateRe=/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/g;
+  const strip=l=>l.replace(/^[\s:.\-–]+|[\s:.\-–]+$/g,"").trim();
+  // valeur liée à une étiquette : après elle sur la ligne, avant elle sur la ligne (texte retourné), ou ligne voisine
+  const labelValue=(re,ok)=>{for(let i=0;i<lines.length;i++){const l=lines[i],m=l.match(re);if(!m||junk(l))continue;
+      const aft=strip(l.slice(m.index+m[0].length)),bef=strip(l.slice(0,m.index));
+      for(const c of [aft,bef,lines[i+1]&&strip(lines[i+1]),lines[i-1]&&strip(lines[i-1])])if(c&&!junk(c)&&(!ok||ok(c)))return c}return ""};
   // Validité
-  const range=flat.match(/(?:valable|validit[ée]|du)\D{0,25}?(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})\D{1,20}?(?:au|jusqu'au|->|à)\D{0,5}(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i);
+  const range=flat.match(/(?:valable|validit[ée])\D{0,25}?(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})\D{1,20}?(?:au|jusqu'au|->)\D{0,5}(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i)
+    ||flat.match(/\bdu\s+(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})\s+au\s+(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i);
   if(range){out.debut=iso(range[1],range[2],range[3]);out.fin=iso(range[4],range[5],range[6])}
-  else{const all=[];for(const l of lines){if(/naiss|n[ée]e? le/i.test(l))continue;let m;dateRe.lastIndex=0;while((m=dateRe.exec(l)))all.push(iso(m[1],m[2],m[3]))}
+  else{const all=[],dateRe=/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/g;for(const l of lines){if(/naiss|n[ée]\(?e?\)? le|adh[ée]sion/i.test(l))continue;let m;dateRe.lastIndex=0;while((m=dateRe.exec(l)))all.push(iso(m[1],m[2],m[3]))}
     const ok=all.filter(d=>{const y=+d.slice(0,4);return y>=2015&&y<=2040}).sort();if(ok.length>=2){out.debut=ok[0];out.fin=ok[ok.length-1]}else if(ok.length===1)out.fin=ok[0]}
-  if(!out.fin){const y=(flat.match(/carte(?: de p[êe]che)?\D{0,15}(20[2-4]\d)/i)||flat.match(/\b(20[2-4]\d)\b/)||[])[1];if(y&&!/hebdo|journ/i.test(flat)){out.debut=y+"-01-01";out.fin=y+"-12-31"}}
-  // Type
+  if(!out.fin&&!/hebdo|journ/i.test(flat)){const y=(flat.match(/carte[^\n]{0,40}?(20[2-4]\d)/i)||flat.match(/\b(20[2-4]\d)\b/)||[])[1];if(y){out.debut=y+"-01-01";out.fin=y+"-12-31"}}
+  // Type (la ligne qui commence par « Carte … » en priorité)
+  const typeLine=lines.find(l=>/^carte\s+(personne|d[ée]couverte|hebdo|journ|interf|mineur|majeur)/i.test(l))||flat;
   const types=[[/d[ée]couverte\s*femme/i,"Carte découverte femme"],[/(moins de 12|-\s*12 ans|d[ée]couverte\s*-?\s*12|enfant)/i,"Carte découverte (moins de 12 ans)"],[/(mineur|12\s*[-àa]\s*18)/i,"Carte personne mineure (12-18 ans)"],[/hebdomadaire/i,"Carte hebdomadaire"],[/journali[èe]re|journ[ée]e/i,"Carte journalière"],[/(majeur|interf[ée]d[ée]rale|annuelle)/i,"Carte personne majeure (annuelle)"]];
-  for(const [re,v] of types)if(re.test(flat)){out.type=v;break}
-  // Numéro
-  const num=flat.match(/(?:\bn\s*[°º]|\bno\b\.?|\bnum[ée]ro\b)\s*(?:de\s*)?(?:carte|adh[ée]rent)?\s*[:.]?\s*([A-Z0-9][A-Z0-9\- ]{5,24}[A-Z0-9])/i);
-  if(num)out.numero=num[1].replace(/\s+/g," ").trim();else{const d=flat.match(/\b\d{8,20}\b/);if(d)out.numero=d[0]}
+  for(const [re,v] of types)if(re.test(typeLine)){out.type=v;break}
+  if(!out.type)for(const [re,v] of types)if(re.test(flat)){out.type=v;break}
+  // Numéro de carte : code avec lettres et chiffres près de l'étiquette, jamais un téléphone
+  const codeIn=c=>{if(!c)return "";c=c.replace(phone,"");const tok=c.split(/\s+/).filter(x=>/^[a-z0-9\-]{6,24}$/i.test(x)&&/\d/.test(x)&&/[a-z]/i.test(x));if(tok.length)return tok[0];const d=c.replace(/[^\d\- ]/g,"").trim();return /^[\d\- ]{6,24}$/.test(d)&&d.replace(/\D/g,"").length>=6?d:""};
+  const numLab=/(n[°º]\s*(de\s*)?carte|num[ée]ro\s*(de\s*)?carte)/i;
+  {let best=null;for(let i=0;i<lines.length;i++){if(!numLab.test(lines[i]))continue;
+    for(let d=0;d<=4;d++)for(const j of d?[i+d,i-d]:[i]){const c=lines[j];if(!c||junk(c)||/adh[ée]rent/i.test(c))continue;const v=codeIn(j===i?c.replace(numLab,""):c);if(!v)continue;
+      const sc=d+(/[a-z]/i.test(v)&&/\d/.test(v)?0:2)+(v.replace(/\W/g,"").length>=8?0:1.5);if(!best||sc<best.sc)best={v,sc}}}
+   if(best)out.numero=best.v}
+  if(!out.numero){const v=labelValue(/(n[°º]\s*(d'?\s*)?adh[ée]rent|adh[ée]rent\s*n[°º]|identifiant|\bnum[ée]ro\b)/i,c=>!!codeIn(c));if(v)out.numero=codeIn(v)}
+  if(!out.numero){let best=null;lines.forEach(l=>{const toks=l.replace(phone," ").split(/\s+/);toks.forEach((tk,ix)=>{if(/[.@\/:]/.test(tk))return;const w=tk.replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi,"");
+      if(!/^[a-z0-9]{8,16}$/i.test(w)||(w.match(/\d/g)||[]).length<3||(w.match(/[a-z]/gi)||[]).length<2)return;
+      const sc=(/^[a-z0-9]+$/.test(w)?0:2)+(ix===toks.length-1?0:1)+(/^\d/.test(w)?1:0)-((w.match(/\d+|[a-z]+/gi)||[]).length-2)*.3;if(!best||sc<best.sc)best={w,sc}})});if(best)out.numero=best.w}
   // Titulaire
-  const nom=after(/\b(?:nom\s*(?:et|&)?\s*pr[ée]nom|titulaire|nom)\b/i),pre=after(/\bpr[ée]nom\b/i);
-  if(nom){out.nom=nom.replace(/\bpr[ée]nom\b.*$/i,"").replace(/\bn[ée]e? le.*$/i,"").trim();if(pre&&!out.nom.toLowerCase().includes(pre.toLowerCase().split(" ")[0]))out.nom=(out.nom+" "+pre.replace(/\bn[ée]e? le.*$/i,"")).trim()}
-  if(out.nom&&out.nom.length>60)out.nom=out.nom.slice(0,60);
-  // AAPPMA
-  const aa=after(/a\.?\s*a\.?\s*p\.?\s*p\.?\s*m\.?\s*a\.?/i);if(aa)out.aappma=aa.replace(/^(de|du|d')\s+/i,"").slice(0,80);
+  const isName=c=>c&&!junk(c)&&!/\d/.test(c)&&/^[A-Za-zÀ-ÿ'\- ]{2,40}$/.test(c)&&!/(carte|p[êe]che|f[ée]d[ée]ration|france|aappma|association|valable|cotisation|n[ée]\(?e?\)?|adh[ée]rent|personne|majeure|union|offre)/i.test(c);
+  let nom=labelValue(/\b(nom\s*(et|&)?\s*pr[ée]nom|titulaire)\b/i,isName);
+  if(!nom){const n=labelValue(/\bnom\b/i,isName),pr=labelValue(/\bpr[ée]nom\b/i,isName);if(n)nom=n+(pr&&!n.toLowerCase().includes(pr.toLowerCase())?" "+pr:"")}
+  if(!nom)for(let i=0;i<lines.length&&!nom;i++){if(!numLab.test(lines[i]))continue;for(const j of [i-1,i+1,i-2,i+2]){const c=lines[j];if(isName(c)&&c.trim().split(/\s+/).length>=2){nom=c;break}}}
+  if(!nom){const i=lines.findIndex(l=>/n[ée]\(?e?\)?\s*le/i.test(l));if(i>=0){const around=[lines[i-2],lines[i-1],lines[i+1],lines[i+2]].filter(isName);if(around.length>=2)nom=around.slice(0,2).reverse().join(" ")}}
+  if(!nom){const stop=/^(PERSONNE|MAJEURE|MINEURE|FRANCE|CARTE|PECHE|PÊCHE|AAPPMA|CPMA|RENNES|FEMME|DECOUVERTE|DÉCOUVERTE)$/;let best=null;
+    lines.forEach(l=>{const m=l.match(/(?:^|\s)([A-Z][a-zà-ÿ]{2,}(?:-[A-Z][a-zà-ÿ]+)?)\s+([A-ZÀ-Ÿ]{2,}(?:-[A-ZÀ-Ÿ]+)?)\s*$/);if(!m||stop.test(m[2])||stop.test(m[1].toUpperCase()))return;
+      const n=(flat.match(new RegExp(m[1],"gi"))||[]).length+(flat.match(new RegExp(m[2],"gi"))||[]).length;if(!best||n>best.n)best={v:m[1]+" "+m[2],n}});if(best&&best.n>=3)nom=best.v}
+  if(nom)out.nom=nom.replace(/\bpr[ée]nom\b\s*:?/gi," ").replace(/\s+/g," ").trim().slice(0,60);
+  // AAPPMA : nom de l'association, jamais une adresse web
+  const aaRe=/\ba\.?\s?a\.?\s?p\.?\s?p\.?\s?m\.?\s?a\b\.?\)?/i,assoc=c=>c&&!junk(c)&&/[a-zà-ÿ]{3}/i.test(c)&&!/^\d/.test(c)&&!/(association de p[êe]che|f[ée]d[ée]ration|obligatoire|cotisation)/i.test(c);
+  for(const l of lines){const m=l.match(aaRe);if(!m||junk(l))continue;const v=strip(strip(l.slice(m.index+m[0].length)).replace(/^(de|du|d')\s+/i,"").replace(/\s+(Vous|vous|Cette|F[ée]licitations|En prenant|Embarquez)\b.*$/,""));if(assoc(v)&&v.length>2){out.aappma=v.slice(0,80);break}}
+  if(out.aappma)out.aappma=out.aappma.replace(/P[ée]cheur/g,"Pêcheur").replace(/P[ée]che\b/g,"Pêche");
+  if(!out.aappma){const v=labelValue(/association de p[êe]che|\baappma\b/i,assoc);if(v)out.aappma=v.replace(/^(de|du|d')\s+/i,"").slice(0,80)}
   // Fédération
-  let fe=after(/f[ée]d[ée]ration(?:\s+d[ée]partementale)?(?:\s+(?:de|du|des|d')\s*)?/i);
-  const fo=fedeOf(fe)||fedeOf(flat);if(fe&&fe.length<70)out.fede=fe;
   const NOMS={"35":"Ille-et-Vilaine","22":"Côtes-d'Armor","29":"Finistère","56":"Morbihan","44":"Loire-Atlantique","53":"Mayenne","50":"Manche","49":"Maine-et-Loire","61":"Orne","72":"Sarthe","85":"Vendée"};
-  if(fo)out.fede=(NOMS[fo.dep]||(fe&&fe.length<40?fe.replace(/\(?\d{2}\)?/,"").trim():"")||"Département")+" ("+fo.dep+")";
+  const fl=lines.find(l=>/f[ée]d[ée]ration/i.test(l)&&!junk(l))||"",dl=(flat.match(/(?:d[ée]pt|\bFD)\W{0,3}(\d{2}|2[AB])\b/i)||[])[1];
+  const fo=(dl&&{dep:dl})||fedeOf(fl,true)||fedeOf(fl)||fedeOf(flat,true);
+  if(fo)out.fede=(NOMS[fo.dep]||"Département")+" ("+fo.dep+")";
   // Réciprocité
-  const rec=(flat.match(/r[ée]ciprocit[ée][^\n]*/i)||[flat])[0];
-  for(const r of ["EHGO","URNE","CHI"])if(new RegExp("\\b"+r+"\\b").test(rec)){out.recip=r;break}
-  if(!out.recip)for(const r of ["EHGO","URNE","CHI"])if(new RegExp("\\b"+r+"\\b").test(flat)){out.recip=r;break}
+  let rec=null;const rl=(flat.match(/r[ée]ciprocit[ée][^\n]*/i)||[flat])[0];
+  for(const r of ["EHGO","URNE","CHI"])if(new RegExp("\\b"+r+"\\b").test(rl)){rec=r;break}
+  if(!rec)for(const r of ["EHGO","URNE","CHI"])if(new RegExp("\\b"+r+"\\b").test(flat)){rec=r;break}
+  out.recip=rec||(flat.length>300?"Aucune":undefined);if(!out.recip)delete out.recip;
   // Options
-  const opts=[];if(/carpe\s*de\s*nuit/i.test(flat))opts.push("Carpe de nuit");if(/migrateur/i.test(flat))opts.push("Timbre migrateurs");if(/timbre\s*(ehgo|chi|urne)/i.test(flat))opts.push("Timbre "+flat.match(/timbre\s*(ehgo|chi|urne)/i)[1].toUpperCase());
+  const opts=[];
+  if(/offre\s*d'?\s*automne|promotionnelle/i.test(flat))opts.push("Offre d'automne (promotionnelle)");
+  if(/carpe\s*de\s*nuit/i.test(flat))opts.push("Carpe de nuit");
+  if(/migrateur/i.test(flat))opts.push("Timbre migrateurs");
+  const tb=flat.match(/timbre\s*(ehgo|chi|urne)/i);if(tb)opts.push("Timbre "+tb[1].toUpperCase());
+  if(/1[èe]re\s*et\s*2[èe]me\s*cat/i.test(flat))opts.push("1re et 2e catégories");
+  if(/tous modes de p[êe]che/i.test(flat))opts.push("tous modes de pêche");
   if(opts.length)out.options=opts.join(", ");
   return out;
 }
