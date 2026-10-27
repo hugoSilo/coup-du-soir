@@ -998,7 +998,7 @@ function spotSheet(id){
       <p class="small muted" style="margin:0">Règles habituelles : gilet de sauvetage obligatoire, pas de float tube dans les écluses ni dans le chenal de navigation. Chaque fédération ou gestionnaire peut l'interdire sur certains parcours.</p></div>
     <div class="panel" style="margin-top:12px"><div class="ttl"><span class="lbl">Carte de pêche</span><span class="chip ${lic.c}">${esc(lic.t)}</span></div>
       <p class="small" style="margin:8px 0 10px">En eau douce, une carte AAPPMA est obligatoire. En étang privé, il faut l'accord du propriétaire. En mer, pas de carte pour la pêche de loisir, mais tailles minimales et marquage des prises obligatoires.</p>
-      <a class="btn wide" href="https://www.cartedepeche.fr" target="_blank" rel="noopener">cartedepeche.fr</a></div>
+      ${(()=>{const f=fedeOf(S.licence&&S.licence.fede)||{dep:"35",...FEDES["35"]};return `<div class="grid2"><a class="btn" href="https://www.cartedepeche.fr" target="_blank" rel="noopener">cartedepeche.fr</a>${f.site?`<a class="btn" href="${f.regl}" target="_blank" rel="noopener">Réglementation de la fédération</a>`:`<a class="btn" href="${FNPF_ANNUAIRE}" target="_blank" rel="noopener">Ma fédération</a>`}</div>`})()}</div>
     <h3>Tailles et périodes par espèce</h3>
     <div style="overflow-x:auto"><table class="reg small"><thead><tr><th>Espèce</th><th>Taille mini</th><th>Période</th></tr></thead>
       <tbody>${SPECIES.map(x=>`<tr><td><b>${x.nom}</b> ${x.closed(m)?'<span class="chip ban">Fermé</span>':""}</td><td class="num">${esc(x.legalT)}</td><td>${esc(x.ferm)}</td></tr>`).join("")}</tbody></table></div>
@@ -1138,6 +1138,97 @@ function viewChat(){
 }
 
 /* ---- Carte de pêche ---- */
+/* ---- Fédérations ---- */
+const FEDES={"35":{nom:"Fédération d'Ille-et-Vilaine pour la pêche",site:"https://www.peche35.fr/",regl:"https://www.peche35.fr/3657-reglementation.htm",cartes:"https://www.peche35.fr/3668-cartes-de-peche.htm",parcours:"https://www.peche35.fr/3672-parcours-specifiques.htm"}};
+const FNPF_ANNUAIRE="https://www.federationpeche.fr/116-fd.htm";
+const DEPTS={"ain":"01","aisne":"02","allier":"03","ardeche":"07","ardennes":"08","ariege":"09","aube":"10","aude":"11","aveyron":"12","calvados":"14","cantal":"15","charente":"16","cher":"18","correze":"19","cote-d'or":"21","cotes-d'armor":"22","creuse":"23","dordogne":"24","doubs":"25","drome":"26","eure":"27","finistere":"29","gard":"30","gers":"32","gironde":"33","herault":"34","ille-et-vilaine":"35","indre":"36","isere":"38","jura":"39","landes":"40","loire":"42","loire-atlantique":"44","loiret":"45","lot":"46","maine-et-loire":"49","manche":"50","marne":"51","mayenne":"53","morbihan":"56","nord":"59","oise":"60","orne":"61","sarthe":"72","vendee":"85","vienne":"86","vosges":"88","yonne":"89"};
+const norm=t=>String(t||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\s+/g,"-");
+function fedeOf(text){
+  const t=String(text||"").replace(/\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/g," ");
+  let d=(t.match(/(?:\bFD\s*|\bf[ée]d[ée]ration[^\n\d]{0,40}|\()(0[1-9]|[1-8]\d|9[0-5]|2[AB])\b/i)||t.match(/(?<![\d\-\/.])\b(0[1-9]|[1-8]\d|9[0-5]|2[AB])\b(?![\d\-\/.])/)||[])[1];
+  if(!d){const n=norm(t);const hit=Object.keys(DEPTS).sort((a,b)=>b.length-a.length).find(k=>new RegExp("(^|[^a-z'])"+k.replace(/[-']/g,"[-' ]")+"($|[^a-z])").test(n));if(hit)d=DEPTS[hit]}
+  return d?{dep:d,...(FEDES[d]||{})}:null;
+}
+function fedePanel(){
+  const f=fedeOf(S.licence&&S.licence.fede)||fedeOf(S.me&&S.me.region)||{dep:"35",...FEDES["35"]};
+  return `<div class="panel stack" style="margin-top:12px"><div class="lbl">Ma fédération de pêche</div>
+    ${f.site?`<p style="margin:0"><b>${esc(f.nom)}</b></p>
+    <div class="grid2"><a class="btn primary" href="${f.site}" target="_blank" rel="noopener">Site de la fédération</a><a class="btn" href="${f.regl}" target="_blank" rel="noopener">Réglementation</a>
+    <a class="btn" href="${f.cartes}" target="_blank" rel="noopener">Cartes de pêche</a><a class="btn" href="${f.parcours}" target="_blank" rel="noopener">Parcours</a></div>`
+    :`<p class="small" style="margin:0">Département ${esc(f.dep)} : retrouve ta fédération dans l'annuaire officiel.</p><a class="btn primary" href="${FNPF_ANNUAIRE}" target="_blank" rel="noopener">Annuaire des fédérations</a>`}
+    <a class="btn sm" href="${FNPF_ANNUAIRE}" target="_blank" rel="noopener">Toutes les fédérations (FNPF)</a></div>`;
+}
+
+/* ---- Lecture automatique de la carte de pêche (PDF ou image), entièrement sur le téléphone ---- */
+const loadedScripts={};
+function loadScript(src){return loadedScripts[src]||(loadedScripts[src]=new Promise((res,rej)=>{const sc=document.createElement("script");sc.src=src;sc.onload=res;sc.onerror=()=>{delete loadedScripts[src];rej(new Error("Chargement impossible : "+src))};document.head.appendChild(sc)}))}
+const absUrl=p=>new URL(p,location.href).href;
+async function ocrCanvasOrBlob(src,onProgress){
+  await loadScript("vendor/ocr/tesseract.min.js");
+  const worker=await Tesseract.createWorker("fra",1,{workerPath:absUrl("vendor/ocr/worker.min.js"),corePath:absUrl("vendor/ocr/core"),langPath:absUrl("vendor/ocr/lang"),gzip:true,
+    logger:m=>{if(m.status==="recognizing text"&&onProgress)onProgress(Math.round(m.progress*100))}});
+  try{const {data}=await worker.recognize(src);return data.text||""}finally{worker.terminate()}
+}
+async function readLicenceFile(file,onStep){
+  const isPdf=file.type==="application/pdf"||/\.pdf$/i.test(file.name);
+  let text="",image=null;
+  if(isPdf){
+    onStep&&onStep("Lecture du PDF…");
+    await loadScript("vendor/pdf/pdf.min.js");pdfjsLib.GlobalWorkerOptions.workerSrc=absUrl("vendor/pdf/pdf.worker.min.js");
+    const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;
+    for(let i=1;i<=Math.min(pdf.numPages,2);i++){const pg=await pdf.getPage(i),tc=await pg.getTextContent();
+      const rows={};tc.items.forEach(it=>{const y=Math.round(it.transform[5]/3);(rows[y]=rows[y]||[]).push(it)});
+      text+=Object.keys(rows).sort((a,b)=>b-a).map(y=>rows[y].sort((a,b)=>a.transform[4]-b.transform[4]).map(it=>it.str).join(" ")).join("\n")+"\n"}
+    const pg=await pdf.getPage(1),vp=pg.getViewport({scale:2}),cv=document.createElement("canvas");cv.width=vp.width;cv.height=vp.height;
+    await pg.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise;
+    image=await new Promise(r=>cv.toBlob(r,"image/jpeg",.85));
+    if(text.replace(/\s/g,"").length<40){onStep&&onStep("PDF scanné : lecture du texte de l'image…");text=await ocrCanvasOrBlob(cv,p=>onStep&&onStep("Lecture du texte… "+p+" %"))}
+  }else{
+    image=await compress(file,1600,.85);
+    onStep&&onStep("Lecture du texte de l'image…");
+    const big=await compress(file,2200,.92);
+    text=await ocrCanvasOrBlob(big,p=>onStep&&onStep("Lecture du texte… "+p+" %"));
+  }
+  return {text,image,fields:parseLicence(text)};
+}
+function parseLicence(raw){
+  const t=String(raw||"").replace(/\r/g,"").replace(/[|]/g," ").replace(/[ \t]+/g," "),lines=t.split("\n").map(l=>l.trim()).filter(Boolean),flat=lines.join("\n"),low=norm(flat).replace(/-/g," ");
+  const out={};
+  const after=(re)=>{for(let i=0;i<lines.length;i++){const m=lines[i].match(re);if(m){const rest=lines[i].slice(m.index+m[0].length).replace(/^[\s:.\-–]+/,"").trim();if(rest.length>1)return rest;if(lines[i+1])return lines[i+1]}}return ""};
+  const iso=(d,m,y)=>{y=+y<100?2000+ +y:+y;return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`};
+  const dateRe=/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/g;
+  // Validité
+  const range=flat.match(/(?:valable|validit[ée]|du)\D{0,25}?(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})\D{1,20}?(?:au|jusqu'au|->|à)\D{0,5}(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i);
+  if(range){out.debut=iso(range[1],range[2],range[3]);out.fin=iso(range[4],range[5],range[6])}
+  else{const all=[];for(const l of lines){if(/naiss|n[ée]e? le/i.test(l))continue;let m;dateRe.lastIndex=0;while((m=dateRe.exec(l)))all.push(iso(m[1],m[2],m[3]))}
+    const ok=all.filter(d=>{const y=+d.slice(0,4);return y>=2015&&y<=2040}).sort();if(ok.length>=2){out.debut=ok[0];out.fin=ok[ok.length-1]}else if(ok.length===1)out.fin=ok[0]}
+  if(!out.fin){const y=(flat.match(/carte(?: de p[êe]che)?\D{0,15}(20[2-4]\d)/i)||flat.match(/\b(20[2-4]\d)\b/)||[])[1];if(y&&!/hebdo|journ/i.test(flat)){out.debut=y+"-01-01";out.fin=y+"-12-31"}}
+  // Type
+  const types=[[/d[ée]couverte\s*femme/i,"Carte découverte femme"],[/(moins de 12|-\s*12 ans|d[ée]couverte\s*-?\s*12|enfant)/i,"Carte découverte (moins de 12 ans)"],[/(mineur|12\s*[-àa]\s*18)/i,"Carte personne mineure (12-18 ans)"],[/hebdomadaire/i,"Carte hebdomadaire"],[/journali[èe]re|journ[ée]e/i,"Carte journalière"],[/(majeur|interf[ée]d[ée]rale|annuelle)/i,"Carte personne majeure (annuelle)"]];
+  for(const [re,v] of types)if(re.test(flat)){out.type=v;break}
+  // Numéro
+  const num=flat.match(/(?:\bn\s*[°º]|\bno\b\.?|\bnum[ée]ro\b)\s*(?:de\s*)?(?:carte|adh[ée]rent)?\s*[:.]?\s*([A-Z0-9][A-Z0-9\- ]{5,24}[A-Z0-9])/i);
+  if(num)out.numero=num[1].replace(/\s+/g," ").trim();else{const d=flat.match(/\b\d{8,20}\b/);if(d)out.numero=d[0]}
+  // Titulaire
+  const nom=after(/\b(?:nom\s*(?:et|&)?\s*pr[ée]nom|titulaire|nom)\b/i),pre=after(/\bpr[ée]nom\b/i);
+  if(nom){out.nom=nom.replace(/\bpr[ée]nom\b.*$/i,"").replace(/\bn[ée]e? le.*$/i,"").trim();if(pre&&!out.nom.toLowerCase().includes(pre.toLowerCase().split(" ")[0]))out.nom=(out.nom+" "+pre.replace(/\bn[ée]e? le.*$/i,"")).trim()}
+  if(out.nom&&out.nom.length>60)out.nom=out.nom.slice(0,60);
+  // AAPPMA
+  const aa=after(/a\.?\s*a\.?\s*p\.?\s*p\.?\s*m\.?\s*a\.?/i);if(aa)out.aappma=aa.replace(/^(de|du|d')\s+/i,"").slice(0,80);
+  // Fédération
+  let fe=after(/f[ée]d[ée]ration(?:\s+d[ée]partementale)?(?:\s+(?:de|du|des|d')\s*)?/i);
+  const fo=fedeOf(fe)||fedeOf(flat);if(fe&&fe.length<70)out.fede=fe;
+  const NOMS={"35":"Ille-et-Vilaine","22":"Côtes-d'Armor","29":"Finistère","56":"Morbihan","44":"Loire-Atlantique","53":"Mayenne","50":"Manche","49":"Maine-et-Loire","61":"Orne","72":"Sarthe","85":"Vendée"};
+  if(fo)out.fede=(NOMS[fo.dep]||(fe&&fe.length<40?fe.replace(/\(?\d{2}\)?/,"").trim():"")||"Département")+" ("+fo.dep+")";
+  // Réciprocité
+  const rec=(flat.match(/r[ée]ciprocit[ée][^\n]*/i)||[flat])[0];
+  for(const r of ["EHGO","URNE","CHI"])if(new RegExp("\\b"+r+"\\b").test(rec)){out.recip=r;break}
+  if(!out.recip)for(const r of ["EHGO","URNE","CHI"])if(new RegExp("\\b"+r+"\\b").test(flat)){out.recip=r;break}
+  // Options
+  const opts=[];if(/carpe\s*de\s*nuit/i.test(flat))opts.push("Carpe de nuit");if(/migrateur/i.test(flat))opts.push("Timbre migrateurs");if(/timbre\s*(ehgo|chi|urne)/i.test(flat))opts.push("Timbre "+flat.match(/timbre\s*(ehgo|chi|urne)/i)[1].toUpperCase());
+  if(opts.length)out.options=opts.join(", ");
+  return out;
+}
 function licenceStatus(c){
   if(!c||!c.fin)return {k:"none",t:"Aucune carte enregistrée",c:"ghost"};
   const end=new Date(c.fin+"T23:59:59"),start=c.debut?new Date(c.debut+"T00:00:00"):null,now=new Date(),days=Math.ceil((end-now)/dayMs);
@@ -1161,7 +1252,11 @@ function viewLicence(){
     <p class="small muted" style="margin:0">Ta carte est privée : toi seul la vois.</p></div>
   <h3>${S.licence?"Modifier ma carte":"Enregistrer ma carte"}</h3>
   <form class="panel stack" id="licence-form">
-    <label class="f">Photo de la carte<input type="file" id="k-photo" accept="image/*"></label>
+    <label class="btn primary wide" style="cursor:pointer">Importer ma carte (PDF ou image) et remplir automatiquement<input type="file" id="k-import" accept="application/pdf,image/*" hidden></label>
+    <div id="k-status" class="alert info small" hidden></div>
+    <img id="k-prev" alt="Aperçu de la carte" hidden style="border-radius:12px;border:1px solid var(--line)">
+    <p class="small muted" style="margin:0">La lecture se fait sur ton téléphone : le fichier n'est envoyé nulle part avant que tu enregistres. Vérifie les champs remplis avant d'enregistrer.</p>
+    <label class="f">Ou seulement une photo de la carte<input type="file" id="k-photo" accept="image/*"></label>
     <label class="f">Nom du titulaire<input id="k-nom" value="${esc(c.nom||"")}"></label>
     <label class="f">Type de carte<select id="k-type">${types.map(t=>`<option ${t===c.type?"selected":""}>${t}</option>`).join("")}</select></label>
     <label class="f">Numéro de carte<input id="k-num" value="${esc(c.numero||"")}"></label>
@@ -1172,6 +1267,7 @@ function viewLicence(){
     <button class="btn primary" type="submit">Enregistrer ma carte</button>
     ${S.licence?`<button class="btn" type="button" data-act="del-licence">Supprimer ma carte</button>`:""}
   </form>
+  ${fedePanel()}
   <div class="alert info" style="margin-top:12px">En cas de contrôle, c'est ta carte officielle (numérique ou imprimée depuis cartedepeche.fr) qui fait foi.</div>
   <a class="btn wide" style="margin-top:12px" href="https://www.cartedepeche.fr" target="_blank" rel="noopener">${st.k==="exp"||st.k==="none"?"Acheter":"Renouveler ou retrouver"} ma carte sur cartedepeche.fr</a>`;
 }
@@ -1345,6 +1441,15 @@ document.addEventListener("change",async e=>{
     updateCatchZone();
     if(info.length){box.textContent=info.join(" · ");box.hidden=false}}
   if(e.target.id==="c-spot")updateCatchZone();
+  if(e.target.id==="k-import"&&e.target.files[0]){const file=e.target.files[0],st=document.getElementById("k-status");const say=t=>{st.hidden=false;st.className="alert info small";st.textContent=t};
+    try{say("Préparation de la lecture…");const r=await readLicenceFile(file,say);S.licImport=r.image;
+      if(r.image){const pv=document.getElementById("k-prev");pv.src=URL.createObjectURL(r.image);pv.hidden=false}
+      const map={nom:"k-nom",type:"k-type",numero:"k-num",aappma:"k-aappma",fede:"k-fede",debut:"k-debut",fin:"k-fin",recip:"k-recip",options:"k-opt"},labels={nom:"titulaire",type:"type",numero:"numéro",aappma:"AAPPMA",fede:"fédération",debut:"début de validité",fin:"fin de validité",recip:"réciprocité",options:"options"};
+      const filled=[];for(const [k,id] of Object.entries(map)){const v=r.fields[k];const el=document.getElementById(id);if(v&&el){el.value=v;if(el.value===v){filled.push(labels[k]);el.style.outline="2px solid var(--accent)"}}}
+      st.className="alert "+(filled.length?"info":"warn")+" small";
+      st.textContent=filled.length?`Rempli automatiquement : ${filled.join(", ")}. Vérifie puis touche « Enregistrer ma carte ».`:"Je n'ai pas réussi à lire les informations : remplis les champs à la main. L'image de la carte sera quand même enregistrée.";
+      if(filled.length<9){const missing=Object.keys(map).filter(k=>!r.fields[k]).map(k=>labels[k]);if(missing.length)st.textContent+=` À compléter : ${missing.join(", ")}.`}
+    }catch(err){console.warn(err);st.hidden=false;st.className="alert warn small";st.textContent="Lecture impossible ("+(err.message||"erreur")+"). Remplis les champs à la main."}}
   if(e.target.id==="c-esp")sizeWarn();
   if(e.target.id==="sp-photos"&&e.target.files.length){const files=[...e.target.files].slice(0,10),spot=e.target.dataset.spot;toast("Envoi de "+files.length+" photo(s)…");
     try{for(const f of files){const path=await upload(await compress(f,1600,.8));const {error}=await sb.from("peche_spot_photos").insert({spot_id:spot,owner:S.user.id,path});if(error)throw error}
@@ -1416,7 +1521,9 @@ document.addEventListener("submit",async e=>{
     if(f.id==="licence-form"){
       const file=document.getElementById("k-photo").files[0];
       const c={owner:S.user.id,nom:v("k-nom")||null,type:v("k-type"),numero:v("k-num")||null,aappma:v("k-aappma")||null,fede:v("k-fede")||null,debut:v("k-debut")||null,fin:v("k-fin"),recip:v("k-recip"),options:v("k-opt")||null,updated_at:new Date().toISOString()};
-      if(file){c.photo_path=await upload(await compress(file,1600,.85),"peche-licences","carte-");if(S.licence&&S.licence.photo_path)sb.storage.from("peche-licences").remove([S.licence.photo_path])}
+      const blob=file?await compress(file,1600,.85):S.licImport;
+      if(blob){c.photo_path=await upload(blob,"peche-licences","carte-");if(S.licence&&S.licence.photo_path)sb.storage.from("peche-licences").remove([S.licence.photo_path])}
+      S.licImport=null;
       const {error}=await sb.from("peche_licences").upsert(c);if(error)throw error;await loadLicence();toast("Carte enregistrée");
     }
   }catch(err){console.warn(err);toast(err.message||"Enregistrement impossible")}

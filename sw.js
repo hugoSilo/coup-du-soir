@@ -1,4 +1,4 @@
-const SHELL="cds-shell-v14",TILES="cds-tiles-v1";
+const SHELL="cds-shell-v15",TILES="cds-tiles-v1";
 const FILES=["./","index.html","app.js","manifest.webmanifest","icon-192.png","icon-512.png","icon-180.png","vendor/leaflet.js","vendor/leaflet.css","vendor/supabase.js","vendor/591.supabase.js"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(SHELL).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()))});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>![SHELL,TILES].includes(k)).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
