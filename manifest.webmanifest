@@ -1,0 +1,16 @@
+{
+  "name": "Coup du Soir",
+  "short_name": "Coup du Soir",
+  "description": "Spots, conditions, conseils, carnet de prises et discussion entre amis pêcheurs.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#16231C",
+  "theme_color": "#16231C",
+  "lang": "fr",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
