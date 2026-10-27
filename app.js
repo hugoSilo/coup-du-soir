@@ -226,34 +226,50 @@ function getWater(lat,lng){
   return WATER[k];
 }
 const WB={};
+const OVERPASS=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter","https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
+async function overpass(q,ms){
+  let last;for(const url of OVERPASS){try{return await fetchJSON(url,ms||20000,"data="+encodeURIComponent(q))}catch(e){last=e}}
+  throw last||new Error("overpass");
+}
 function getWaterBody(lat,lng){
   const k=lat.toFixed(4)+","+lng.toFixed(4);
-  if(WB[k])return WB[k];
-  try{const c=JSON.parse(localStorage.getItem("wb:"+k));if(c){WB[k]=c;return c}}catch(e){}
+  const cur=WB[k];
+  if(cur&&!(cur.error&&Date.now()-cur.at>20000))return cur;
+  if(!cur){try{const c=JSON.parse(localStorage.getItem("wb2:"+k));if(c){WB[k]=c;return c}}catch(e){}}
   WB[k]={loading:true};
   (async()=>{
-    const q=`[out:json][timeout:15];is_in(${lat},${lng})->.a;area.a["natural"="water"];out tags;(way(around:35,${lat},${lng})["waterway"~"^(river|stream|canal|brook|ditch|drain)$"];relation(around:35,${lat},${lng})["waterway"~"^(river|canal)$"];);out tags;way(around:150,${lat},${lng})["natural"="coastline"];out ids;`;
+    const q=`[out:json][timeout:20];is_in(${lat},${lng})->.a;(way(pivot.a)["natural"="water"];rel(pivot.a)["natural"="water"];)->.l1;.l1 out tags;`+
+      `way(around:400,${lat},${lng})["natural"="water"];out geom;`+
+      `way(around:90,${lat},${lng})["waterway"~"^(river|stream|canal|brook|ditch|drain)$"];out geom;`+
+      `way(around:200,${lat},${lng})["natural"="coastline"];out geom;`;
     let res={k:null};
     try{
-      const j=await fetchJSON("https://overpass-api.de/api/interpreter?data="+encodeURIComponent(q),15000);
-      const els=j.elements||[];
+      const j=await overpass(q),els=j.elements||[];
+      const kx=111320*Math.cos(lat*rad),ky=110540,P=p=>({x:(p.lon-lng)*kx,y:(p.lat-lat)*ky}),O={x:0,y:0};
+      const segD=g=>{let m=1e9;for(let i=0;i<g.length-1;i++){const a=g[i],b=g[i+1],dx=b.x-a.x,dy=b.y-a.y,L=dx*dx+dy*dy||1;let t=(-a.x*dx-a.y*dy)/L;t=Math.max(0,Math.min(1,t));m=Math.min(m,Math.hypot(a.x+t*dx,a.y+t*dy))}return m};
+      const lakeOf=tags=>{const w=tags.water||"",n=tags.name||"";
+        if(w==="river"||w==="oxbow")return {k:"grande_riviere",name:n};
+        if(w==="stream")return {k:"petite_riviere",name:n};
+        if(w==="canal")return {k:"canal",name:n};
+        if(w==="lagoon")return {k:"mer",name:n};
+        if(w==="pond"||/^(étang|etang|mare)/i.test(n))return {k:"etang",name:n};
+        return {k:/étang|etang/i.test(n)?"etang":"lac",name:n}};
       const area=els.find(e=>e.type==="area"&&e.tags&&e.tags.natural==="water");
-      const lines=els.filter(e=>(e.type==="way"||e.type==="relation")&&e.tags&&e.tags.waterway);
-      const coast=els.some(e=>e.type==="way"&&!e.tags);
-      const rank={river:4,canal:3,stream:2,brook:1,ditch:0,drain:0};
-      const line=lines.sort((x,y)=>(rank[y.tags.waterway]||0)-(rank[x.tags.waterway]||0))[0];
-      if(area){const w=area.tags.water||"",n=area.tags.name||"";
-        if(w==="river"||w==="oxbow")res={k:"grande_riviere",name:n||(line&&line.tags.name)||""};
-        else if(w==="canal")res={k:"canal",name:n};
-        else if(w==="pond"||/^(étang|etang|mare)/i.test(n))res={k:"etang",name:n};
-        else if(w==="lagoon")res={k:"mer",name:n};
-        else res={k:/étang|etang/i.test(n)?"etang":"lac",name:n};}
-      else if(line){const w=line.tags.waterway,n=line.tags.name||"",width=parseFloat(line.tags.width);
+      const polys=els.filter(e=>e.type==="way"&&e.tags&&e.tags.natural==="water"&&e.geometry&&e.geometry.length>3);
+      const inPoly=polys.find(e=>pip(e.geometry.map(P),O));
+      const lines=els.filter(e=>e.type==="way"&&e.tags&&e.tags.waterway&&e.geometry).map(e=>{
+        const w=e.tags.waterway,width=parseFloat(e.tags.width);
+        const tol=w==="river"?(width||20)/2+15:w==="canal"?(width||15)/2+12:w==="stream"||w==="brook"?12:8;
+        return {e,d:segD(e.geometry.map(P)),tol}}).filter(x=>x.d<=x.tol).sort((x,y)=>x.d-y.d);
+      const coast=els.filter(e=>e.type==="way"&&e.tags&&e.tags.natural==="coastline"&&e.geometry).some(e=>segD(e.geometry.map(P))<150);
+      if(area)res=lakeOf(area.tags);
+      else if(inPoly)res=lakeOf(inPoly.tags);
+      else if(lines.length){const l=lines[0].e,w=l.tags.waterway,n=l.tags.name||"",width=parseFloat(l.tags.width);
         res={k:w==="river"?(width&&width<6?"petite_riviere":"grande_riviere"):w==="canal"?"canal":"petite_riviere",name:n};}
       else if(coast)res={k:"mer",name:""};
       res.at=Date.now();
-      try{localStorage.setItem("wb:"+k,JSON.stringify(res))}catch(e){}
-    }catch(e){res={k:null,error:true}}
+      try{localStorage.setItem("wb2:"+k,JSON.stringify(res))}catch(e){}
+    }catch(e){res={k:null,error:true,at:Date.now()}}
     WB[k]=res;scheduleRender();
     if(S.sheet&&S.sheet.type==="spotForm"&&!S.formTouched)renderSheet(true);
   })();
@@ -288,7 +304,7 @@ function getAutoZones(spot){
       `(node(around:${R},${lat},${lng})["waterway"~"^(weir|dam|lock_gate)$"];way(around:${R},${lat},${lng})["waterway"~"^(weir|dam)$"];node(around:${R},${lat},${lng})["lock"="yes"];);out geom;`;
     let res={zones:[],at:Date.now()};
     try{
-      const j=await fetchJSON("https://overpass-api.de/api/interpreter",25000,"data="+encodeURIComponent(q));
+      const j=await overpass(q,25000);
       res.zones=buildAutoZones(spot,j.elements||[]);
       try{localStorage.setItem("az:"+k,JSON.stringify(res))}catch(e){}
     }catch(e){res.error=true}
@@ -577,7 +593,7 @@ function initMap(){
     const pending=getWaterBody(la,ln);if(pending.loading)toast("Recherche du point d'eau…");
     waitWater(la,ln).then(w=>{
       if(map._waterReq!==req)return;
-      if(w.error){toast("Vérification impossible (réseau) : touche à nouveau l'eau dans un instant");if(tempMarker){tempMarker.remove();tempMarker=null}return}
+      if(w.error){toast("Service de reconnaissance occupé : touche à nouveau l'eau dans quelques secondes");if(tempMarker){tempMarker.remove();tempMarker=null}return}
       if(!w.k){toast("Pas de point d'eau ici : touche directement la rivière ou l'étang");if(tempMarker){tempMarker.remove();tempMarker=null}return}
       tempMarker.setStyle({fillColor:"#16231C"});
       S.tempSpot={id:"temp",nom:w.name||"Point d'eau sélectionné",type:w.k==="mer"?"mer":["etang","lac"].includes(w.k)?"etang":"riviere",lat:la,lng:ln,statut:"ok",float:"unk",cat:"2",temp:true};
@@ -814,7 +830,7 @@ function spotSheet(id){
     <div class="bar"><button class="btn sm" data-act="close" aria-label="Fermer">←</button><span class="t">${esc(s.nom)}</span>${s.temp?"":`<span class="chip ${st.c}">${st.t}</span>`}</div>
     <div class="wrap" style="padding-top:14px">
       ${(()=>{const mi=milieuOf(s),wb=getWaterBody(s.lat,s.lng);const nm=s.nom_eau||(wb&&wb.name)||"";
-        return `<div class="row" style="margin-bottom:8px;gap:6px">${mi.k?`<span class="chip ok">${MILIEU[mi.k]}${nm?" · "+esc(nm):""}</span><span class="small muted">${mi.src==="auto"?"reconnu automatiquement":mi.src==="fiche"?"d'après la fiche":"d'après le type"}</span>`:wb&&wb.loading?`<span class="chip ghost">Reconnaissance du point d'eau…</span>`:`<span class="chip warn">Point d'eau non reconnu</span><span class="small muted">touche plus près de l'eau${s.temp?"":" ou précise le milieu dans la fiche"}</span>`}</div>`})()}
+        return `<div class="row" style="margin-bottom:8px;gap:6px">${mi.k?`<span class="chip ok">${MILIEU[mi.k]}${nm?" · "+esc(nm):""}</span><span class="small muted">${mi.src==="auto"?"reconnu automatiquement":mi.src==="fiche"?"d'après la fiche":"d'après le type"}</span>`:wb&&wb.loading?`<span class="chip ghost">Reconnaissance du point d'eau…</span>`:wb&&wb.error?`<span class="chip warn">Reconnaissance impossible pour l'instant</span><button class="btn sm" data-act="wb-retry" data-spot="${s.id}">Réessayer</button>`:`<span class="chip warn">Milieu non reconnu</span><span class="small muted">${s.temp?"touche plus près de l'eau":s.owner===S.user.id?"précise-le avec « Modifier le spot »":"l'auteur du spot peut le préciser"}</span>`}</div>`})()}
       <div class="small muted" style="margin-bottom:10px">${s.type==="etang"?"Plan d'eau":s.type==="mer"?"Côte":"Cours d'eau"} · <span class="num">${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}</span>${S.pos?` · <span class="num">${distKm(S.pos,s).toFixed(1)} km</span>`:""}${s.exemple?" · exemple":""}${s.prive?" · privé":""}${s.owner&&!s.exemple?" · ajouté par "+esc(pseudo(s.owner)):""}</div>
       <div class="grid2">
         <button class="btn primary" data-act="waze" data-spot="${s.id}">Y aller avec Waze</button>
@@ -1109,6 +1125,7 @@ document.addEventListener("click",async e=>{
     case "del-gear":{const g=(S.gear[S.user.id]||[]).find(x=>x.id===d.id);await sb.from("peche_gear").delete().eq("id",d.id);if(g&&g.photo_path)sb.storage.from("peche-photos").remove([g.photo_path]);await loadGear(S.user.id);toast("Matériel supprimé");break}
     case "del-spot":{const {error}=await sb.from("peche_spots").delete().eq("id",d.spot);if(error)throw error;closeSheet();await loadSpots();toast("Spot supprimé");break}
     case "report":openSheet("report",{id:d.spot});break;
+    case "wb-retry":{const sp=spotById(d.spot);delete WB[sp.lat.toFixed(4)+","+sp.lng.toFixed(4)];getWaterBody(sp.lat,sp.lng);renderSheet(true);break}
     case "edit-spot":{const sp=spotById(d.spot);openSheet("spotForm",{lat:sp.lat,lng:sp.lng,edit:sp.id});break}
     case "zone-add":S.zoneAdd=true;renderSheet(true);toast("Touche la carte à l'endroit de la zone");break;
     case "zone-cancel":S.zoneAdd=false;renderSheet(true);break;
