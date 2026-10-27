@@ -400,10 +400,16 @@ async function analyzeAt(lat,lng,z){
   const sx=Math.min(W-1,Math.floor((xt-X+1)*256)),sy=Math.min(W-1,Math.floor((yt-Y+1)*256));
   let start=-1;for(let r=0;r<=18&&start<0;r++)for(let dy=-r;dy<=r&&start<0;dy++)for(let dx=-r;dx<=r;dx++){const x=sx+dx,y=sy+dy;if(x>=0&&y>=0&&x<W&&y<W&&m[y*W+x]){start=y*W+x;break}}
   if(start<0)return null;
-  const reg=new Uint8Array(N),q=new Int32Array(N);let qh=0,qt=0,area=0,border=0;reg[start]=1;q[qt++]=start;
-  while(qh<qt){const p=q[qh++];area++;const x=p%W,y=(p/W)|0;if(x===0||y===0||x===W-1||y===W-1)border++;
-    if(x>0&&m[p-1]&&!reg[p-1]){reg[p-1]=1;q[qt++]=p-1}if(x<W-1&&m[p+1]&&!reg[p+1]){reg[p+1]=1;q[qt++]=p+1}
-    if(y>0&&m[p-W]&&!reg[p-W]){reg[p-W]=1;q[qt++]=p-W}if(y<W-1&&m[p+W]&&!reg[p+W]){reg[p+W]=1;q[qt++]=p+W}}
+  // relier les morceaux d'eau coupés par un pont ou une route (dilatation de 6 px pour la connexité seulement)
+  const R6=6,tmp=new Uint8Array(N),md=new Uint8Array(N);
+  for(let y=0;y<W;y++){let run=-1e9;for(let x=0;x<W;x++){if(m[y*W+x])run=x;tmp[y*W+x]=x-run<=R6?1:0}run=1e9;for(let x=W-1;x>=0;x--){if(m[y*W+x])run=x;if(run-x<=R6)tmp[y*W+x]=1}}
+  for(let x=0;x<W;x++){let run=-1e9;for(let y=0;y<W;y++){if(tmp[y*W+x])run=y;md[y*W+x]=y-run<=R6?1:0}run=1e9;for(let y=W-1;y>=0;y--){if(tmp[y*W+x])run=y;if(run-y<=R6)md[y*W+x]=1}}
+  const con=new Uint8Array(N),q=new Int32Array(N);let qh=0,qt=0;con[start]=1;q[qt++]=start;
+  while(qh<qt){const p=q[qh++],x=p%W,y=(p/W)|0;
+    if(x>0&&md[p-1]&&!con[p-1]){con[p-1]=1;q[qt++]=p-1}if(x<W-1&&md[p+1]&&!con[p+1]){con[p+1]=1;q[qt++]=p+1}
+    if(y>0&&md[p-W]&&!con[p-W]){con[p-W]=1;q[qt++]=p-W}if(y<W-1&&md[p+W]&&!con[p+W]){con[p+W]=1;q[qt++]=p+W}}
+  const reg=new Uint8Array(N);let area=0,border=0;
+  for(let p=0;p<N;p++)if(con[p]&&m[p]){reg[p]=1;area++;const x=p%W,y=(p/W)|0;if(x===0||y===0||x===W-1||y===W-1)border++}
   if(area<30)return null;
   // distance à la berge (chanfrein)
   const D=new Float32Array(N);for(let p=0;p<N;p++)D[p]=reg[p]?1e6:0;
