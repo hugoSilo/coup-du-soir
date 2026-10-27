@@ -1145,10 +1145,10 @@ document.addEventListener("submit",async e=>{
   try{
     if(f.id==="auth-form"){
       const m=S.authMode||"login",email=v("a-mail");
-      if(m==="signup"){const {data,error}=await sb.auth.signUp({email,password:document.getElementById("a-pass").value,options:{data:{app:"peche"},emailRedirectTo:location.origin+location.pathname}});if(error)throw error;
+      if(m==="signup"){const {data,error}=await sb.auth.signUp({email,password:document.getElementById("a-pass").value,options:{data:{app:"peche"},emailRedirectTo:location.origin+location.pathname}});if(error)throw new Error(authMsg(error));
         if(!data.session){S.authMode="login";render();toast("Compte créé : confirme ton adresse avec l'e-mail reçu")}}
       else if(m==="forgot"){const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});if(error)throw error;toast("E-mail envoyé si un compte existe");S.authMode="login";render()}
-      else{const {error}=await sb.auth.signInWithPassword({email,password:document.getElementById("a-pass").value});if(error)throw new Error(error.message.includes("confirm")?"Confirme d'abord ton adresse e-mail":"E-mail ou mot de passe incorrect")}
+      else{const {error}=await sb.auth.signInWithPassword({email,password:document.getElementById("a-pass").value});if(error)throw new Error(authMsg(error))}
     }
     if(f.id==="recovery-form"){const {error}=await sb.auth.updateUser({password:document.getElementById("r-pass").value});if(error)throw error;S.recovery=false;toast("Mot de passe changé");render()}
     if(f.id==="onboard-form"){const {error}=await sb.from("peche_profiles").insert({id:S.user.id,pseudo:v("o-pseudo"),region:v("o-region")||null});if(error)throw error;await startApp()}
@@ -1202,6 +1202,14 @@ document.addEventListener("submit",async e=>{
   finally{if(btn&&document.body.contains(btn))btn.disabled=false}
 });
 
+function authMsg(e){const c=e.code||"",m=(e.message||"").toLowerCase();
+  if(c==="signup_disabled"||m.includes("signups not allowed"))return "Les inscriptions sont fermées pour le moment : demande à l'administrateur de l'app de les ouvrir.";
+  if(c==="email_not_confirmed"||m.includes("not confirmed"))return "Confirme d'abord ton adresse avec l'e-mail reçu (pense aux spams).";
+  if(c==="invalid_credentials"||m.includes("invalid login"))return "E-mail ou mot de passe incorrect. Pas encore de compte ? Touche « Créer un compte ».";
+  if(c==="user_already_exists"||m.includes("already registered"))return "Un compte existe déjà avec cet e-mail : connecte-toi.";
+  if(c==="over_email_send_rate_limit"||m.includes("rate limit"))return "Trop d'e-mails envoyés : réessaie dans une heure.";
+  if(c==="weak_password"||m.includes("password"))return "Mot de passe trop faible : au moins 8 caractères.";
+  return e.message||"Connexion impossible";}
 /* ================= Démarrage ================= */
 async function startApp(){
   await loadProfiles();
