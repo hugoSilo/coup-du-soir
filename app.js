@@ -831,6 +831,7 @@ function render(){
   const busy=ae&&v.contains(ae)&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName);
   if(!busy)v.innerHTML=({carte:viewCarte,prises:viewPrises,chat:viewChat,licence:viewLicence,profils:viewProfils})[S.tab]();
   const comp=document.getElementById("composer");
+  {const av=document.getElementById("me-av");if(av){av.hidden=false;const h=avatar(S.user.id);if(av.dataset.h!==h){av.dataset.h=h;av.innerHTML=h}}}
   const inConv=S.tab==="chat"&&S.conv&&!S.chatMode;
   {const tb=document.querySelector('nav [data-tab="chat"]');if(tb){const n=totalUnread();let bd=tb.querySelector(".nb");if(n&&!bd){bd=document.createElement("span");bd.className="nb";tb.style.position="relative";tb.appendChild(bd)}if(bd){bd.hidden=!n;bd.textContent=n>99?"99+":n}}}
   if(inConv&&document.visibilityState==="visible"&&unread(S.conv))markRead(S.conv);
@@ -868,6 +869,7 @@ function renderOnboarding(){
     <p class="muted" style="margin:0">Choisis ton pseudo. Il sera visible par les autres pêcheurs.</p>
     <label class="f">Pseudo<input id="o-pseudo" maxlength="40" required placeholder="ex. Hugo_Carnas"></label>
     <label class="f">Région<input id="o-region" placeholder="ex. Ille-et-Vilaine"></label>
+    <label class="f">Photo de profil (facultatif)<input type="file" id="o-photo" accept="image/*"></label>
     <button class="btn primary" type="submit">C'est parti</button>
     <button class="btn sm" type="button" data-act="logout">Se déconnecter</button></form>`;
 }
@@ -1234,7 +1236,7 @@ async function openConv(id){S.conv=id;S.chatMode=null;S.showMembers=false;render
 async function openDm(uid){const {data,error}=await sb.rpc("peche_open_dm",{other:uid});if(error)throw error;await loadConvs();openConv(data)}
 function msgHTML(m){
   const c=m.catch_id&&S.catches.find(x=>x.id===m.catch_id),sp=m.spot_id&&spotById(m.spot_id);
-  return `<div class="msg${m.owner===S.user.id?" me":""}"><div class="who">${esc(pseudo(m.owner))} · ${dateFr(m.created_at)}</div>${m.text?esc(m.text):""}
+  return `<div class="msg${m.owner===S.user.id?" me":""}"><div class="who" style="display:flex;align-items:center;gap:6px">${m.owner!==S.user.id?avatar(m.owner).replace('class="avatar','style="width:22px;height:22px;font-size:.7rem" class="avatar'):""}${esc(pseudo(m.owner))} · ${dateFr(m.created_at)}</div>${m.text?esc(m.text):""}
     ${c?`<div style="margin-top:6px">${c.photo_path?img(c.photo_path,"ph","").replace('class="ph','style="border-radius:10px;width:100%" class="ph'):""}<div><b>${esc(SP[c.espece]?SP[c.espece].nom:c.espece)} ${esc(c.taille||"")} cm</b> · ${esc(c.leurre||"")}</div></div>`:""}
     ${sp?`<button class="btn sm" style="margin-top:6px" data-spot="${sp.id}">${isRoute(sp)?"🛶":"📍"} ${esc(sp.nom)}</button>`:""}</div>`;
 }
@@ -1484,7 +1486,8 @@ function viewProfils(){
   const p=S.me,gear=S.gear[S.user.id]||[],others=Object.keys(S.profiles).filter(u=>u!==S.user.id);
   return `<h2>Mon profil</h2>
   <form class="panel stack" id="prof-form">
-    <div class="row">${avatar(S.user.id,true)}<label class="f" style="flex:1">Photo de profil<input type="file" id="p-photo" accept="image/*"></label></div>
+    <div class="row" style="gap:16px"><label class="av-edit" title="Changer la photo">${avatar(S.user.id,true)}<span class="cam" aria-hidden="true">📷</span><input type="file" id="p-photo" accept="image/*" hidden></label>
+      <div style="flex:1;min-width:0"><b>${esc(p.pseudo)}</b><div class="small muted">Touche la photo pour ${p.photo_path?"la changer":"en ajouter une"}.</div>${p.photo_path?`<button class="btn sm" type="button" data-act="photo-del" style="margin-top:6px">Retirer la photo</button>`:""}</div></div>
     <label class="f">Pseudo<input id="p-pseudo" value="${esc(p.pseudo)}" maxlength="40" required></label>
     <label class="f">Région<input id="p-region" value="${esc(p.region||"")}"></label>
     <label class="f">Techniques préférées<input id="p-tech" value="${esc(p.tech||"")}" placeholder="ex. Leurres, verticale, float tube"></label>
@@ -1788,6 +1791,7 @@ document.addEventListener("click",async e=>{
       const txt=`🛶 Sortie float tube « ${sp.nom} »${dt?" le "+dateFr(dt):""} : ${fmtKm(routeLen(sp.trace))}, environ ${fmtDur(routeLen(sp.trace)/1000/FT_SPEED)} de navigation${st?", lever du soleil "+hhmm(st.rise):""}. Qui vient ?`;
       const {error}=await sb.from("peche_messages").insert({owner:S.user.id,text:txt,spot_id:sp.id});if(error)throw error;toast("Sortie proposée dans le chat général");break}
     case "route-done":{const sp=spotById(d.spot);const {error}=await sb.from("peche_spots").update({sortie_faite:true,sortie_date:sp.sortie_date||new Date().toISOString()}).eq("id",sp.id);if(error)throw error;await loadSpots();renderSheet(true);toast("Sortie marquée comme faite");break}
+    case "photo-del":{const old=S.me.photo_path;const {error}=await sb.from("peche_profiles").update({photo_path:null}).eq("id",S.user.id);if(error)throw error;if(old)sb.storage.from("peche-photos").remove([old]);await loadProfiles();toast("Photo retirée");break}
     case "chat-back":S.conv=null;S.chatMode=null;S.editGroup=null;render();scrollTo(0,0);break;
     case "chat-open":openConv(d.conv);break;
     case "chat-new-dm":S.chatMode="dm";render();scrollTo(0,0);break;
@@ -1828,6 +1832,8 @@ document.addEventListener("change",async e=>{
   if(e.target.id==="c-spot"){drawCatchRoute();if(!S.catchPos||S.catchPos.src==="spot"||S.catchPos.src==="gps"&&S.pos&&spotById(e.target.value)&&spotDist(spotById(e.target.value),S.pos)>3){const sp=spotById(e.target.value);if(sp)setCatchPos({lat:sp.lat,lng:sp.lng,src:"spot"},true)}else{updateCatchPosInfo();refreshCatchWx()}}
   if(e.target.id==="c-when")refreshCatchWx();
   if(e.target.id==="rt-date")updateRouteSun();
+  if(e.target.id==="p-photo"&&e.target.files[0]){toast("Envoi de la photo…");try{const old=S.me.photo_path,path=await upload(await compress(e.target.files[0],400,.8),"peche-photos","avatar-");
+    const {error}=await sb.from("peche_profiles").update({photo_path:path}).eq("id",S.user.id);if(error)throw error;if(old)sb.storage.from("peche-photos").remove([old]);await loadProfiles();toast("Photo de profil mise à jour")}catch(err){toast("Photo non enregistrée : "+(err.message||"erreur"))}}
   if(e.target.id==="gpx-in"&&e.target.files[0]){try{const g=parseGPX(await e.target.files[0].text());e.target.value="";if(g.trace.length<2)throw new Error("Aucune trace trouvée dans ce fichier");
     getWaterBody(g.trace[0][0],g.trace[0][1]);if(map)map.fitBounds(L.polyline(g.trace).getBounds(),{padding:[30,30]});
     openSheet("routeForm",{trace:g.trace,date:g.date&&!isNaN(g.date)?g.date:null,faite:!!(g.date&&g.date<new Date()),nom:g.nom});toast(`Trace importée : ${g.trace.length} points, ${fmtKm(routeLen(g.trace))}`)}catch(err){toast(err.message||"Fichier GPX illisible")}}
@@ -1862,7 +1868,9 @@ document.addEventListener("submit",async e=>{
       else{const {error}=await sb.auth.signInWithPassword({email,password:document.getElementById("a-pass").value});if(error)throw new Error(authMsg(error))}
     }
     if(f.id==="recovery-form"){const {error}=await sb.auth.updateUser({password:document.getElementById("r-pass").value});if(error)throw error;S.recovery=false;toast("Mot de passe changé");render()}
-    if(f.id==="onboard-form"){const {error}=await sb.from("peche_profiles").insert({id:S.user.id,pseudo:v("o-pseudo"),region:v("o-region")||null});if(error)throw error;await startApp()}
+    if(f.id==="onboard-form"){const {error}=await sb.from("peche_profiles").insert({id:S.user.id,pseudo:v("o-pseudo"),region:v("o-region")||null});if(error)throw error;
+      const ph=document.getElementById("o-photo").files[0];if(ph){try{const path=await upload(await compress(ph,400,.8),"peche-photos","avatar-");await sb.from("peche_profiles").update({photo_path:path}).eq("id",S.user.id)}catch(e){toast("Photo non enregistrée : tu pourras l'ajouter dans Profils")}}
+      await startApp()}
     if(f.id==="catch-form"){
       const spot=spotById(v("c-spot")),now=new Date();let when=v("c-when")?new Date(v("c-when")):now;if(!(when<=now))when=now;
       const place=S.catchPos||spot,key=place.lat.toFixed(3)+","+place.lng.toFixed(3)+"|"+when.toISOString().slice(0,13);
@@ -1910,7 +1918,7 @@ document.addEventListener("submit",async e=>{
     if(f.id==="report-form"){const {error}=await sb.from("peche_reports").insert({owner:S.user.id,spot_id:f.dataset.spot,text:v("rp-text")});if(error)throw error;
       await sb.from("peche_messages").insert({owner:S.user.id,text:"⚠️ Signalement : "+v("rp-text"),spot_id:f.dataset.spot});openSheet("spot",{id:f.dataset.spot});toast("Signalement envoyé au groupe")}
     if(f.id==="prof-form"){
-      const file=document.getElementById("p-photo").files[0],p={pseudo:v("p-pseudo"),region:v("p-region")||null,tech:v("p-tech")||null,esp:v("p-esp")||null,bio:v("p-bio")||null};
+      const file=null,p={pseudo:v("p-pseudo"),region:v("p-region")||null,tech:v("p-tech")||null,esp:v("p-esp")||null,bio:v("p-bio")||null};
       if(file){p.photo_path=await upload(await compress(file,400,.8),"peche-photos","avatar-");if(S.me.photo_path)sb.storage.from("peche-photos").remove([S.me.photo_path])}
       const {error}=await sb.from("peche_profiles").update(p).eq("id",S.user.id);if(error)throw error;await loadProfiles();toast("Profil enregistré");
     }
