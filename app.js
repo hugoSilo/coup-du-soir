@@ -708,7 +708,7 @@ addEventListener("online",()=>{updateNet();syncQueue()});addEventListener("offli
 
 /* ================= Données ================= */
 async function loadAll(){
-  await Promise.all([loadProfiles(),loadSpots(),loadCatches(),loadMessages(),loadDepths(),loadGear(S.user.id),loadLicence(),loadZones(),loadSpotPhotos()]);
+  await Promise.all([loadProfiles(),loadSpots(),loadCatches(),loadMessages(),loadDepths(),loadGear(S.user.id),loadLicence(),loadZones(),loadSpotPhotos(),loadRegles()]);
 }
 async function loadProfiles(){const {data}=await sb.from("peche_profiles").select("*");S.profiles=Object.fromEntries((data||[]).map(p=>[p.id,p]));S.me=S.profiles[S.user.id]||null;scheduleRender()}
 async function loadSpots(){const {data}=await sb.from("peche_spots").select("*").order("created_at");if(data){S.spots=data;drawSpots()}scheduleRender()}
@@ -731,6 +731,14 @@ function getCommons(spot){
   }catch(e){COMMONS[k].error=true}COMMONS[k].loading=false;scheduleRender()})();
   return COMMONS[k];
 }
+async function loadRegles(){const {data}=await sb.from("peche_regles_eau").select("*").order("nom_eau");if(data){S.regles=data;drawSpots()}scheduleRender()}
+function waterNames(s){const wb=s.lat!=null&&WB[s.lat.toFixed(4)+","+s.lng.toFixed(4)];return [s.nom_eau,wb&&wb.name,s.nom].filter(Boolean)}
+const wnorm=t=>" "+norm(t).replace(/[-'’]/g," ").replace(/\s+/g," ")+" ";
+function regleFor(s){const mil=s.milieu||(s.lat!=null&&(WB[s.lat.toFixed(4)+","+s.lng.toFixed(4)]||{}).k);if(mil==="etang"||mil==="lac")return null;
+  const names=waterNames(s).filter(n=>!/^\s*(l'|l’)?(étang|etang|lac|mare|bassin|gravi[eè]re|plan d'eau)/i.test(n)).map(wnorm);
+  return (S.regles||[]).find(r=>{const k=wnorm(r.nom_eau);return names.some(n=>n.includes(k))})||null}
+// Statut float tube effectif : celui du spot s'il est renseigné, sinon la règle du groupe pour ce cours d'eau
+function floatOf(s){if(s.float&&s.float!=="unk")return {k:s.float,note:s.float_note,src:"spot"};const r=regleFor(s);if(r)return {k:r.float,note:r.note,src:"regle",regle:r};return {k:"unk",note:s.float_note,src:"inconnu"}}
 async function loadLicence(){const {data}=await sb.from("peche_licences").select("*").eq("owner",S.user.id).maybeSingle();S.licence=data||null;scheduleRender()}
 let channel=null;
 function subscribe(){
@@ -781,7 +789,7 @@ function drawSpots(){
   if(!spotLayer)return;spotLayer.clearLayers();
   S.spots.forEach(s=>{
     const st=STATUT[s.statut]||STATUT.ok;
-    if(S.layers.float){const f=FLOAT[s.float]||FLOAT.unk;L.circleMarker([s.lat,s.lng],{radius:15,color:f.col,weight:4,fill:false,dashArray:s.float==="unk"?"4 4":null,interactive:false}).addTo(spotLayer)}
+    if(S.layers.float){const fk=floatOf(s).k,f=FLOAT[fk]||FLOAT.unk;L.circleMarker([s.lat,s.lng],{radius:15,color:f.col,weight:4,fill:false,dashArray:fk==="unk"?"4 4":null,interactive:false}).addTo(spotLayer)}
     const m=L.circleMarker([s.lat,s.lng],{radius:10,color:"#fff",weight:3,fillColor:st.col,fillOpacity:1}).addTo(spotLayer);
     m.bindTooltip(esc(s.nom)+(s.prive?" (privé)":""),{direction:"top",offset:[0,-8]});
     m.on("click",ev=>{L.DomEvent.stopPropagation(ev);openSheet("spot",{id:s.id})});
@@ -858,7 +866,7 @@ function viewCarte(){
   const list=spots.map(s=>{const c=scoreFor(s),st=STATUT[s.statut]||STATUT.ok,top=c&&speciesFor(s,new Date(),c).filter(x=>!x.closed)[0];
     return `<button class="panel spot-card" data-spot="${s.id}">
       <span class="stripe" style="background:${st.col}"></span>
-      <span style="min-width:0"><b>${esc(s.nom)}</b><br><span class="small muted">${st.t}${s.statut!=="ban"&&top?" · "+top.s.nom+" actif":""}${S.pos?` · <span class="num">${distKm(S.pos,s).toFixed(1)} km</span>`:""}${s.prive?" · privé":""}${s.exemple?" · exemple":""}${S.layers.float?" · "+(FLOAT[s.float]||FLOAT.unk).t:""}</span></span>
+      <span style="min-width:0"><b>${esc(s.nom)}</b><br><span class="small muted">${st.t}${s.statut!=="ban"&&top?" · "+top.s.nom+" actif":""}${S.pos?` · <span class="num">${distKm(S.pos,s).toFixed(1)} km</span>`:""}${s.prive?" · privé":""}${s.exemple?" · exemple":""}${S.layers.float?" · "+(FLOAT[floatOf(s).k]||FLOAT.unk).t:""}</span></span>
       <span class="score num">${s.statut==="ban"?"—":c?c.score.toFixed(1):"…"}<small>${s.statut==="ban"||!c?"":"/10"}</small></span></button>`}).join("");
   return `
   ${lic.k==="exp"||lic.k==="soon"?`<div class="alert ${lic.k==="exp"?"ban":"warn"}" style="margin-top:12px">Carte de pêche : ${esc(lic.t)}. <button class="btn sm" data-tab="licence">Voir</button></div>`:""}
@@ -988,11 +996,13 @@ function spotSheet(id){
       <div class="row"><input id="dep-m" type="number" step="0.1" min="0" inputmode="decimal" placeholder="Profondeur (m)" style="flex:1 1 120px"><input id="dep-n" placeholder="Où ? (ex. pied du pont)" style="flex:2 1 160px"></div>
       <button class="btn" data-act="add-depth" data-spot="${s.id}">Ajouter un relevé</button></div>`}`;
   }else if(sub==="regle"){
-    const m=now.getMonth(),f=FLOAT[s.float]||FLOAT.unk,lic=licenceStatus(S.licence);
+    const m=now.getMonth(),fo=floatOf(s),f=FLOAT[fo.k]||FLOAT.unk,lic=licenceStatus(S.licence),wname=waterNames(s).find(n=>n!==s.nom)||(s.temp?"":s.nom_eau)||"";
     body=`${s.temp?`<div class="alert warn">Point non référencé : statut de pêche inconnu. Vérifie la réglementation de ta fédération avant de pêcher.</div>`:`<div class="alert ${st.c==="ok"?"info":st.c}"><b>${st.t}</b>${s.raison?"<br>"+esc(s.raison):""}</div>`}
     <div class="kv" style="margin-top:12px"><div><span class="small muted">Catégorie</span><b>${s.cat==="1"?"1re":"2e"} catégorie</b></div><div><span class="small muted">Autorisation</span><b class="t">${esc(s.carte||"Carte de pêche AAPPMA (à vérifier)")}</b></div></div>
     <div class="panel" style="margin-top:12px"><div class="ttl"><span class="lbl">Float tube</span><span class="chip ${f.c}">${f.t}</span></div>
-      <p class="small" style="margin:8px 0 4px">${esc(s.float_note||"Non renseigné")}</p>
+      <p class="small" style="margin:8px 0 4px">${esc(fo.note||"Non renseigné")}</p>
+      ${fo.src==="regle"?`<p class="small muted" style="margin:0 0 6px">Règle du groupe pour « ${esc(fo.regle.nom_eau)} »${fo.regle.owner?" (ajoutée par "+esc(pseudo(fo.regle.owner))+")":""}. Un spot précis peut avoir son propre statut.</p>`:""}
+      ${fo.src!=="regle"&&wname&&!regleFor(s)?`<button class="btn sm" style="margin-bottom:8px" data-act="regle-add" data-nom="${esc(wname.replace(/^(la|le|les|l')\s*/i,""))}">Float tube autorisé sur toute la rivière « ${esc(wname.replace(/^(la|le|les|l')\s*/i,""))} »</button>`:""}
       <p class="small muted" style="margin:0 0 8px"><b>Mise à l'eau :</b> ${esc(s.mise_eau||"À vérifier")}</p>
       ${!s.temp&&s.owner===S.user.id?`<button class="btn sm" style="margin-bottom:8px" data-act="edit-spot" data-spot="${s.id}">Indiquer si le float tube est autorisé</button>`:!s.temp?`<p class="small muted" style="margin:0 0 8px">Seul l'auteur du spot peut le modifier. Une erreur ? Utilise « Signaler » en bas de la fiche.</p>`:""}
       <p class="small muted" style="margin:0">Règles habituelles : gilet de sauvetage obligatoire, pas de float tube dans les écluses ni dans le chenal de navigation. Chaque fédération ou gestionnaire peut l'interdire sur certains parcours.</p></div>
@@ -1087,7 +1097,9 @@ function catchForm(spotId){
   </form></div>`;
 }
 function spotForm(lat,lng,ed){
-  const e=ed||{},wb=getWaterBody(lat,lng),k=e.milieu||(wb&&wb.k),opt=(v,cur)=>v===cur?"selected":"";
+  const e0=ed||{},wb=getWaterBody(lat,lng),k=e0.milieu||(wb&&wb.k),opt=(v,cur)=>v===cur?"selected":"";
+  const rg=(!e0.float||e0.float==="unk")?regleFor({nom_eau:e0.nom_eau,nom:e0.nom,lat,lng}):null;
+  const e=rg?{...e0,float:rg.float,float_note:e0.float_note||rg.note}:e0;
   return `<div class="sheet" role="dialog"><div class="bar"><button class="btn sm" data-act="${ed?"back-spot":"close"}" ${ed?`data-spot="${ed.id}"`:""}>←</button><span class="t">${ed?"Modifier le spot":"Nouveau spot"}</span></div>
   <form class="wrap stack" id="spot-form" style="padding-top:16px" data-lat="${lat}" data-lng="${lng}" ${ed?`data-id="${ed.id}"`:""}>
     <p class="small muted num" style="margin:0">Position : ${lat}, ${lng}</p>
@@ -1314,8 +1326,30 @@ function viewLicence(){
 }
 
 /* ---- Profils ---- */
+function guessGearType(t){t=norm(t).replace(/-/g," ");
+  if(/float ?tube|bellyboat|belly boat|palme/.test(t))return "Float tube";
+  if(/moulinet/.test(t))return "Moulinet";
+  if(/\bcanne|\bensemble|combo/.test(t))return "Canne";
+  if(/tresse|\bfil\b|nylon|fluoro|bas de ligne/.test(t))return "Fil / tresse";
+  if(/leurre|shad|swimbait|spinner|spintail|cuiller|jig|poisson nageur|crank|stickbait|popper|texas|tete plomb|jerk|chatterbait|ondulante|soft|finesse|worm/.test(t))return "Leurre";
+  return "Autre"}
+function slugTitle(u){try{const parts=new URL(u).pathname.split("/").filter(x=>x&&!/^\d+$/.test(x)&&!/^[a-z]?\d/i.test(x)&&x.length>3&&!["p","produit","product","products","fr","shop","dp"].includes(x.toLowerCase()));
+  const sl=parts.sort((a,b)=>b.length-a.length)[0]||"";const t=decodeURIComponent(sl).replace(/\.html?$/,"").replace(/[-_](\d+[,\d]*)+$/,"").replace(/^(achat|vente|acheter|buy)[-_]/i,"").replace(/[-_]+/g," ").trim();return t?t[0].toUpperCase()+t.slice(1):""}catch(e){return ""}}
+async function fetchProduct(raw){
+  const m=String(raw).match(/https?:\/\/[^\s<>"']+/i);if(!m)throw new Error("Aucun lien trouvé dans le texte collé");
+  const url=m[0].replace(/[).,;]+$/,""),shareTitle=String(raw).replace(m[0],"").replace(/\s+/g," ").replace(/^[\s:\-–|]+|[\s:\-–|]+$/g,"").trim();
+  const site=new URL(url).hostname.replace(/^www\./,"");
+  let data=null;
+  try{const {data:d,error}=await sb.functions.invoke("peche-produit",{body:{url}});if(error)throw error;data=d}catch(e){data={blocked:true,error:e.message}}
+  if(data&&!data.blocked&&data.nom)return {...data,ok:true};
+  const share=shareTitle.replace(/\s*[|\-–]\s*(decathlon|amazon|pecheur\.com|pacific p[êe]che)[^|]*$/i,"").trim(),slug=slugTitle(url);
+  const sw=new Set(wnorm(slug).trim().split(" ").filter(w=>w.length>3)),overlap=wnorm(share).trim().split(" ").some(w=>sw.has(w));
+  const nom=share.length>3&&(overlap||!slug)?share:slug||share;
+  return {ok:false,url,site,nom:nom.slice(0,140),reason:data&&data.error};
+}
 function gearRow(g,mine){
-  return `<div class="panel gear">${img(g.photo_path,"ph",g.type)}<div style="min-width:0"><span class="lbl">${esc(g.type)}</span><br><b>${esc(g.nom)}</b><div class="small muted">${esc(g.det||"")}</div></div>
+  const pic=g.photo_path?img(g.photo_path,"ph",g.type):g.photo_url?`<img class="ph" src="${esc(g.photo_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:img(null,"ph",g.type);
+  return `<div class="panel gear">${pic}<div style="min-width:0"><span class="lbl">${esc(g.type)}${g.marque?" · "+esc(g.marque):""}</span><br><b>${esc(g.nom)}</b><div class="small muted">${esc(g.det||"")}${g.prix!=null?` · <span class="num">${Number(g.prix).toFixed(2).replace(".",",")} €</span>`:""}</div>${g.url?`<a class="small" href="${esc(g.url)}" target="_blank" rel="noopener">Voir le produit</a>`:""}</div>
   ${mine?`<button class="btn sm" data-act="del-gear" data-id="${g.id}" aria-label="Supprimer">✕</button>`:"<span></span>"}</div>`;
 }
 function viewProfils(){
@@ -1335,11 +1369,19 @@ function viewProfils(){
   <h2>Mon matos</h2>
   <div class="stack">${gear.length?gear.map(g=>gearRow(g,true)).join(""):`<div class="empty"><b>Aucun matériel</b>Ajoute tes cannes, moulinets, fils et leurres.</div>`}</div>
   <form class="panel stack" id="gear-form" style="margin-top:12px"><div class="lbl">Ajouter du matériel</div>
+    <label class="f">Coller un lien produit (Decathlon, Pacific Pêche, Amazon…)<div class="row" style="flex-wrap:nowrap"><input id="g-link" inputmode="url" placeholder="https://… ou le texte « Partager » du site" style="flex:1;min-width:0"><button class="btn" type="button" data-act="gear-fetch">Remplir</button></div></label>
+    <div id="g-status" class="alert info small" hidden></div>
+    <img id="g-prev" alt="" hidden referrerpolicy="no-referrer" style="max-height:160px;object-fit:contain;border-radius:10px;background:#fff">
+    <input type="hidden" id="g-url"><input type="hidden" id="g-photourl"><input type="hidden" id="g-marque"><input type="hidden" id="g-prix">
     <div class="grid2"><label class="f">Type<select id="g-type"><option>Canne</option><option>Moulinet</option><option>Fil / tresse</option><option>Leurre</option><option>Float tube</option><option>Autre</option></select></label>
     <label class="f">Nom<input id="g-nom" required placeholder="ex. Shad 10 cm chartreuse"></label></div>
     <label class="f">Détails<input id="g-det" placeholder="ex. 2,40 m, 10-35 g"></label>
     <label class="f">Photo<input type="file" id="g-photo" accept="image/*"></label>
     <button class="btn" type="submit">Ajouter au matos</button></form>
+  <h2>Float tube : rivières autorisées</h2>
+  <div class="panel stack"><p class="small muted" style="margin:0">Règles du groupe appliquées à tous les spots de ces cours d'eau, sauf si un spot a son propre statut.</p>
+    ${(S.regles||[]).map(r=>`<div class="row" style="justify-content:space-between"><span><span class="chip ${(FLOAT[r.float]||FLOAT.unk).c}">${esc(r.nom_eau)}</span> <span class="small muted">${(FLOAT[r.float]||FLOAT.unk).t}</span></span>${r.owner===S.user.id?`<button class="btn sm" data-act="regle-del" data-id="${r.id}" aria-label="Supprimer">✕</button>`:""}</div>`).join("")||'<span class="muted small">Aucune règle</span>'}
+    <form class="row" id="regle-form"><input id="r-nom" placeholder="Nom du cours d'eau (ex. Mayenne)" required maxlength="60" style="flex:1 1 160px"><button class="btn" type="submit">Ajouter</button></form></div>
   <h2>Les pêcheurs</h2>
   <div class="stack">${others.length?others.map(u=>{const q=S.profiles[u],n=S.catches.filter(x=>x.owner===u).length;
     return `<button class="panel row" style="width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer" data-act="open-profile" data-uid="${u}">${avatar(u)}<span style="flex:1;min-width:0"><b>${esc(q.pseudo)}</b><br><span class="small muted">${esc(q.region||"")}${q.region?" · ":""}${n} prise${n>1?"s":""}</span></span></button>`}).join(""):`<div class="empty"><b>Personne d'autre pour l'instant</b>Envoie l'adresse de l'app à tes amis : leur profil apparaîtra ici dès leur inscription.</div>`}</div>
@@ -1454,6 +1496,18 @@ document.addEventListener("click",async e=>{
     case "del-spot":{const {error}=await sb.from("peche_spots").delete().eq("id",d.spot);if(error)throw error;closeSheet();await loadSpots();toast("Spot supprimé");break}
     case "report":openSheet("report",{id:d.spot});break;
     case "wb-retry":{const sp=spotById(d.spot);delete WB[sp.lat.toFixed(4)+","+sp.lng.toFixed(4)];getWaterBody(sp.lat,sp.lng);renderSheet(true);break}
+    case "regle-add":{const {error}=await sb.from("peche_regles_eau").insert({nom_eau:d.nom,float:"ok",note:"Float tube autorisé (indiqué par le groupe), sauf écluses, chenal de navigation et zones interdites signalées",owner:S.user.id});if(error)throw error;await loadRegles();renderSheet(true);toast("Règle ajoutée pour toute la rivière");break}
+    case "regle-del":{const {error}=await sb.from("peche_regles_eau").delete().eq("id",d.id);if(error)throw error;await loadRegles();toast("Règle supprimée");break}
+    case "gear-fetch":{const st=document.getElementById("g-status"),raw=document.getElementById("g-link").value.trim();if(!raw){toast("Colle d'abord un lien");break}
+      st.hidden=false;st.className="alert info small";st.textContent="Lecture du produit…";
+      try{const r=await fetchProduct(raw),set=(id,v)=>{const el=document.getElementById(id);if(el&&v!=null&&v!=="")el.value=v};
+        set("g-url",r.url);set("g-nom",(r.marque&&r.nom&&!r.nom.toLowerCase().includes(r.marque.toLowerCase())?r.marque+" ":"")+(r.nom||""));
+        set("g-type",guessGearType((r.nom||"")+" "+(r.categorie||"")));set("g-marque",r.marque);set("g-prix",r.prix);set("g-photourl",r.image&&/^https:\/\//.test(r.image)?r.image:"");
+        const det=[r.categorie&&r.categorie.split(/[>/]/).pop().trim(),r.site].filter(Boolean).join(" · ");set("g-det",det||r.site);
+        const pv=document.getElementById("g-prev");if(r.image){pv.src=r.image;pv.hidden=false}else pv.hidden=true;
+        if(r.ok){st.textContent=`Produit lu sur ${r.site}${r.prix!=null?" ("+Number(r.prix).toFixed(2).replace(".",",")+" €)":""} : vérifie le type et touche « Ajouter au matos ».`}
+        else{st.className="alert warn small";st.textContent=`${r.site} ne permet pas la lecture automatique : j'ai repris ${r.nom?"le nom du produit depuis le lien":"le lien"}. Vérifie le nom, choisis le type et ajoute une photo si tu veux.`}
+      }catch(err){st.className="alert warn small";st.textContent=err.message||"Lecture impossible"}break}
     case "edit-spot":{const sp=spotById(d.spot);openSheet("spotForm",{lat:sp.lat,lng:sp.lng,edit:sp.id});break}
     case "zone-add":S.zoneAdd=true;renderSheet(true);toast("Touche la carte à l'endroit de la zone");break;
     case "zone-cancel":S.zoneAdd=false;renderSheet(true);break;
@@ -1554,8 +1608,9 @@ document.addEventListener("submit",async e=>{
       if(file){p.photo_path=await upload(await compress(file,400,.8),"peche-photos","avatar-");if(S.me.photo_path)sb.storage.from("peche-photos").remove([S.me.photo_path])}
       const {error}=await sb.from("peche_profiles").update(p).eq("id",S.user.id);if(error)throw error;await loadProfiles();toast("Profil enregistré");
     }
+    if(f.id==="regle-form"){const {error}=await sb.from("peche_regles_eau").insert({nom_eau:v("r-nom").replace(/^(la|le|les|l')\s*/i,""),float:"ok",note:"Float tube autorisé (indiqué par le groupe), sauf écluses, chenal de navigation et zones interdites signalées",owner:S.user.id});if(error)throw new Error(error.code==="23505"?"Cette rivière est déjà dans la liste":error.message);await loadRegles();toast("Rivière ajoutée")}
     if(f.id==="gear-form"){
-      const file=document.getElementById("g-photo").files[0],g={owner:S.user.id,type:v("g-type"),nom:v("g-nom"),det:v("g-det")||null};
+      const file=document.getElementById("g-photo").files[0],g={owner:S.user.id,type:v("g-type"),nom:v("g-nom"),det:v("g-det")||null,url:v("g-url")||null,photo_url:v("g-photourl")||null,marque:v("g-marque")||null,prix:v("g-prix")!==""?+v("g-prix"):null};
       if(file)g.photo_path=await upload(await compress(file,800,.78));
       const {error}=await sb.from("peche_gear").insert(g);if(error)throw error;await loadGear(S.user.id);toast("Ajouté au matos");
     }
