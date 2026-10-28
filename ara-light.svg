@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 142 46" role="img" aria-label="Arapaima">
+<defs><linearGradient id="ara-l" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="142" y2="0"><stop offset="0" stop-color="#C4D0C1"/><stop offset="0.5" stop-color="#B5C4B1"/><stop offset="0.66" stop-color="#C9A88A"/><stop offset="0.8" stop-color="#D9603F"/><stop offset="1" stop-color="#E2553A"/></linearGradient></defs>
+<g stroke="#0F1713" stroke-opacity=".28" stroke-width=".8" stroke-linejoin="round" fill="url(#ara-l)">
+<path d="M80 12.8C86 8 94 5.6 102 6.6C108 7.6 112 11 114.5 16.8L106 15C98 13.6 90 12.8 80 12.8Z"/>
+<path d="M80 33C86 37.8 94 40.4 102 39.4C108 38.4 112 35 114.5 29.2L106 31C98 32.4 90 33 80 33Z"/>
+<path d="M112 17.2C119 10.6 131 10.2 137 16.6C139.6 20 139.6 26 137 29.4C131 35.8 119 35.4 112 28.8Z"/>
+<path d="M3 23C6 18 14 15.4 26 14.4C46 12.8 70 12 88 12.6C98 13 106 15 113 17.4L113 28.6C106 31 98 32.6 88 33C70 33.8 46 33 28 31.6C16 30.6 7 28 3 25Z"/>
+<path d="M27 27.6C31 32.6 37 35.6 42.5 35.8C38.5 31.8 34 29.2 27 27.6Z" opacity=".85"/>
+</g>
+<path d="M24.5 15.6C27 19.5 27 25.5 24.5 29.6" fill="none" stroke="#16231C" stroke-width="1.1" stroke-linecap="round" opacity=".45"/>
+<path d="M3.4 23.6L12.5 24.6" stroke="#16231C" stroke-width="1.1" stroke-linecap="round" opacity=".6"/>
+<circle cx="13" cy="20" r="1.6" fill="#16231C"/>
+</svg>
