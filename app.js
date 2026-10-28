@@ -766,6 +766,7 @@ function initMap(){
   spotLayer=L.layerGroup().addTo(map);
   map.on("click",e=>{
     const {lat,lng}=e.latlng;
+    if(S.draw){S.draw.points.push([+lat.toFixed(6),+lng.toFixed(6)]);redrawDraw();render();return}
     if(S.addMode){S.addMode=false;document.getElementById("map").classList.remove("adding");openSheet("spotForm",{lat:+lat.toFixed(5),lng:+lng.toFixed(5)});render();
       isWater(+lat.toFixed(5),+lng.toFixed(5)).then(ok=>{if(ok===false)toast("Attention : ce point n'est pas sur l'eau. Place le spot au bord ou sur l'eau.")});return}
     const la=+lat.toFixed(5),ln=+lng.toFixed(5),req=Symbol();map._waterReq=req;
@@ -788,6 +789,11 @@ function setBase(b){S.layers.base=b;Object.values(baseLayers).forEach(l=>map.rem
   if(roadLayer){map.removeLayer(roadLayer);if(S.layers.routes&&b==="sat")roadLayer.addTo(map)}}
 function drawSpots(){
   if(!spotLayer)return;spotLayer.clearLayers();
+  S.spots.filter(isRoute).forEach(s=>{const col=s.sortie_faite?ROUTE_COL.fait:ROUTE_COL.prevu;
+    L.polyline(s.trace,{color:"#fff",weight:7,opacity:.55,interactive:false}).addTo(spotLayer);
+    const pl=L.polyline(s.trace,{color:col,weight:4,opacity:.95,dashArray:s.sortie_faite?null:"8 6"}).addTo(spotLayer);
+    pl.bindTooltip("🛶 "+esc(s.nom),{sticky:true});pl.on("click",ev=>{L.DomEvent.stopPropagation(ev);openSheet("spot",{id:s.id})});
+    L.circleMarker(s.trace[s.trace.length-1],{radius:6,color:"#fff",weight:2,fillColor:"#C2362B",fillOpacity:1,interactive:false}).addTo(spotLayer)});
   S.spots.forEach(s=>{
     const st=STATUT[s.statut]||STATUT.ok;
     if(S.layers.float){const fk=floatOf(s).k,f=FLOAT[fk]||FLOAT.unk;L.circleMarker([s.lat,s.lng],{radius:15,color:f.col,weight:4,fill:false,dashArray:fk==="unk"?"4 4":null,interactive:false}).addTo(spotLayer)}
@@ -868,10 +874,12 @@ function viewCarte(){
   const list=spots.map(s=>{const c=scoreFor(s),st=STATUT[s.statut]||STATUT.ok,top=c&&speciesFor(s,new Date(),c).filter(x=>!x.closed)[0];
     return `<button class="panel spot-card" data-spot="${s.id}">
       <span class="stripe" style="background:${st.col}"></span>
-      <span style="min-width:0"><b>${esc(s.nom)}</b><br><span class="small muted">${st.t}${s.statut!=="ban"&&top?" · "+top.s.nom+" actif":""}${S.pos?` · <span class="num">${distKm(S.pos,s).toFixed(1)} km</span>`:""}${s.prive?" · privé":""}${s.exemple?" · exemple":""}${S.layers.float?" · "+(FLOAT[floatOf(s).k]||FLOAT.unk).t:""}</span></span>
+      <span style="min-width:0"><b>${isRoute(s)?"🛶 ":""}${esc(s.nom)}</b><br>${isRoute(s)?`<span class="small muted">${fmtKm(routeLen(s.trace))} · ${s.sortie_faite?"sortie faite":"sortie prévue"}${s.sortie_date?" le "+new Date(s.sortie_date).toLocaleDateString("fr-FR"):""}</span><br>`:""}<span class="small muted">${st.t}${s.statut!=="ban"&&top?" · "+top.s.nom+" actif":""}${S.pos?` · <span class="num">${distKm(S.pos,s).toFixed(1)} km</span>`:""}${s.prive?" · privé":""}${s.exemple?" · exemple":""}${S.layers.float?" · "+(FLOAT[floatOf(s).k]||FLOAT.unk).t:""}</span></span>
       <span class="score num">${s.statut==="ban"?"—":c?c.score.toFixed(1):"…"}<small>${s.statut==="ban"||!c?"":"/10"}</small></span></button>`}).join("");
   return `
   ${lic.k==="exp"||lic.k==="soon"?`<div class="alert ${lic.k==="exp"?"ban":"warn"}" style="margin-top:12px">Carte de pêche : ${esc(lic.t)}. <button class="btn sm" data-tab="licence">Voir</button></div>`:""}
+  ${S.draw?`<div class="alert info" style="margin-top:10px"><b>Tracé du parcours :</b> touche l'eau point par point (départ, virages, arrivée). <span class="num">${S.draw.points.length} point${S.draw.points.length>1?"s":""} · ${fmtKm(S.draw.points.length>1?routeLen(S.draw.points):0)}</span>
+    <div class="row" style="margin-top:8px;gap:6px"><button class="btn sm primary" data-act="draw-done" ${S.draw.points.length<2?"disabled":""}>Terminer</button><button class="btn sm" data-act="draw-undo" ${S.draw.points.length?"":"disabled"}>Retirer le dernier point</button><button class="btn sm" data-act="draw-cancel">Annuler</button></div></div>`:""}
   ${S.addMode?`<div class="alert info" style="margin-top:10px"><b>Touche la carte</b> à l'endroit du nouveau spot. <button class="btn sm" data-act="cancel-add">Annuler</button></div>`:""}
   <div class="seg" role="group" aria-label="Fond de carte" style="margin-top:10px">
     <button data-base="sat" aria-pressed="${S.layers.base==="sat"}">Satellite</button>
@@ -883,7 +891,8 @@ function viewCarte(){
     ${S.layers.float?Object.values(FLOAT).map(f=>`<span class="chip ${f.c}"><span class="dot" style="background:${f.col}"></span>${f.t.replace("Float tube ","").replace(": ","")}</span>`).join(""):Object.values(STATUT).map(f=>`<span class="chip ${f.c}"><span class="dot" style="background:${f.col}"></span>${f.t}</span>`).join("")}
   </div>
   <p class="small muted" style="margin:8px 0 0">Touche n'importe quel point d'eau sur la carte pour voir ses conditions et l'itinéraire Waze.</p>
-  <div class="grid2" style="margin-top:12px"><button class="btn primary" data-act="add-spot">+ Ajouter un spot</button><button class="btn" data-act="new-catch">+ Nouvelle prise</button></div>
+  <div class="grid2" style="margin-top:12px"><button class="btn primary" data-act="add-spot">+ Ajouter un spot</button><button class="btn" data-act="new-catch">+ Nouvelle prise</button>
+    <button class="btn" data-act="draw-start">🛶 Tracer un parcours</button><label class="btn" style="cursor:pointer">🛶 Importer une trace GPX<input type="file" id="gpx-in" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden></label></div>
   <h3>Indice de pêche maintenant · <span class="num">${hhmm(new Date())}</span></h3>
   <div class="stack">${list||`<div class="empty"><b>Aucun spot pour l'instant</b>Touche « Ajouter un spot » puis l'endroit sur la carte, ou touche directement un point d'eau pour voir ses conditions.</div>`}</div>
   <p class="small muted" style="margin-top:16px">Météo Open-Meteo, niveaux et températures d'eau Hub'Eau, fonds de carte IGN. Les statuts des spots sont renseignés par le groupe : vérifie toujours la réglementation de ta fédération.</p>`;
@@ -894,9 +903,10 @@ function spotSheet(id){
   const sub=S.spotTab||"cond",now=new Date(),c=conditions(s,now),st=STATUT[s.statut]||STATUT.ok,wa=getWater(s.lat,s.lng),W=getWx(s.lat,s.lng);
   const catches=S.catches.filter(x=>x.spot_id===id),depths=S.depths.filter(x=>x.spot_id===id);
   const zones=S.zones.filter(z=>z.spot_id===id),sphotos=S.spotPhotos.filter(x=>x.spot_id===id);
-  const tabs=[["cond","Conditions"],["conseils","Conseils"],["zones","Zones et poissons"]].concat(s.temp?[]:[["photos","Photos"]]).concat([["regle","Réglementation"]]).concat(s.temp?[]:[["prises","Prises ("+catches.length+")"]]);
+  const tabs=(isRoute(s)?[["parcours","Parcours"]]:[]).concat([["cond","Conditions"],["conseils","Conseils"],["zones","Zones et poissons"]]).concat(s.temp?[]:[["photos","Photos"]]).concat([["regle","Réglementation"]]).concat(s.temp?[]:[["prises","Prises ("+catches.length+")"]]);
   let body="";
-  if(sub==="zones"){
+  if(sub==="parcours"&&isRoute(s)){body=routePanel(s)}
+  else if(sub==="zones"){
     const ranked=zones.map(z=>({z,r:zoneScore(z,s,c,now)})).sort((a,b)=>(b.r?b.r.score:-1)-(a.r?a.r.score:-1));
     const ptsCatch=catches.filter(k=>k.lat!=null).length,AZs=getAutoZones(s),auto=AZs.zones||[];
     const spp=c?speciesFor(s,now,c):[];
@@ -1031,7 +1041,7 @@ function spotSheet(id){
       </div>
       <div class="seg" style="margin:16px 0" role="group">${tabs.map(([k,t])=>`<button data-spottab="${k}" aria-pressed="${k===sub}">${t}</button>`).join("")}</div>
       ${body}
-      ${!s.temp&&s.owner===S.user.id?`<button class="btn primary wide" style="margin-top:20px" data-act="edit-spot" data-spot="${s.id}">Modifier le spot (float tube, statut, profondeurs…)</button><button class="btn wide" style="margin-top:12px" data-act="del-spot" data-spot="${s.id}">Supprimer ce spot</button>`:""}
+      ${!s.temp&&s.owner===S.user.id?`<button class="btn primary wide" style="margin-top:20px" data-act="edit-spot" data-spot="${s.id}">${isRoute(s)?"Modifier le parcours (nom, date, notes)":"Modifier le spot (float tube, statut, profondeurs…)"}</button><button class="btn wide" style="margin-top:12px" data-act="del-spot" data-spot="${s.id}">Supprimer ce spot</button>`:""}
       ${s.temp?"":`<button class="btn wide" style="margin-top:12px" data-act="report" data-spot="${s.id}">Signaler une erreur ou une interdiction</button>`}
     </div></div>`;
 }
@@ -1062,13 +1072,18 @@ function catchCard(x){
         ${x.meteo&&x.meteo.mom?`<span class="chip ghost">${{aube:"Aube",jour:"Journée",crep:"Crépuscule",nuit:"Nuit"}[x.meteo.mom]||""}</span>`:""}
         ${x.meteo&&x.meteo.temp!=null?`<span class="chip ghost num">${Math.round(x.meteo.temp)}°C · ${Math.round(x.meteo.press)} hPa${x.meteo.trend!=null?(x.meteo.trend<-.6?" ↘":x.meteo.trend>.6?" ↗":" →"):""}${x.meteo.water!=null?" · eau "+Math.round(x.meteo.water)+"°C":""}</span>`:""}
         ${x.meteo&&x.meteo.moon?`<span class="chip ghost">${esc(x.meteo.moon)}</span>`:""}
+        ${x.meteo&&x.meteo.route_km!=null?`<span class="chip ok">🛶 à ${String(x.meteo.route_km).replace(".",",")} km du départ</span>`:""}
         ${x.meteo&&x.meteo.zone?`<span class="chip ok">📍 ${esc(x.meteo.zone)}</span>`:x.lat!=null?`<span class="chip ok">📍 Endroit exact</span>`:""}
         <button class="chip ghost" style="cursor:pointer" data-act="open-profile" data-uid="${x.owner}">${esc(pseudo(x.owner))}</button></div>
       ${me?`<div class="row" style="margin-top:8px"><button class="btn sm" data-act="share-catch" data-id="${x.id}">Partager</button><button class="btn sm" data-act="del-catch" data-id="${x.id}">Supprimer</button></div>`:""}
     </div></div>`;
 }
 /* ---- Carte de l'endroit exact et météo de la prise ---- */
-let catchMap=null,catchMarker=null;
+let catchMap=null,catchMarker=null,catchRoute=null;
+function drawCatchRoute(){if(!catchMap)return;if(catchRoute){catchRoute.remove();catchRoute=null}const sp=spotById((document.getElementById("c-spot")||{}).value);if(!isRoute(sp))return;
+  catchRoute=L.layerGroup([L.polyline(sp.trace,{color:"#fff",weight:8,opacity:.6}),L.polyline(sp.trace,{color:sp.sortie_faite?ROUTE_COL.fait:ROUTE_COL.prevu,weight:5}),
+    L.circleMarker(sp.trace[0],{radius:7,color:"#fff",weight:2,fillColor:"#2E7D4F",fillOpacity:1}),L.circleMarker(sp.trace[sp.trace.length-1],{radius:7,color:"#fff",weight:2,fillColor:"#C2362B",fillOpacity:1})]).addTo(catchMap);
+  if(!S.catchPos||S.catchPos.src==="spot")catchMap.fitBounds(L.polyline(sp.trace).getBounds(),{padding:[25,25],maxZoom:17})}
 function initCatchMap(){
   const el=document.getElementById("c-map");if(!el)return;if(catchMap){catchMap.remove();catchMap=null}
   const sp=spotById((document.getElementById("c-spot")||{}).value),start=S.catchPos||S.pos||sp||{lat:47.95,lng:-1.85};
@@ -1079,23 +1094,24 @@ function initCatchMap(){
   if(!S.catchPos)catchMarker.setOpacity(.35);
   catchMarker.on("dragend",()=>{const p=catchMarker.getLatLng();setCatchPos({lat:p.lat,lng:p.lng,src:"manuel"},false)});
   catchMap.on("click",e=>setCatchPos({lat:e.latlng.lat,lng:e.latlng.lng,src:"manuel"},false));
-  setTimeout(()=>catchMap&&catchMap.invalidateSize(),60);
+  setTimeout(()=>{if(catchMap){catchMap.invalidateSize();drawCatchRoute()}},60);
   updateCatchPosInfo();refreshCatchWx();
 }
 function setCatchPos(p,center){
   S.catchPos=p?{lat:+p.lat.toFixed(6),lng:+p.lng.toFixed(6),src:p.src}:null;
   if(S.catchPos&&catchMarker){catchMarker.setLatLng([S.catchPos.lat,S.catchPos.lng]);catchMarker.setOpacity(1);if(center&&catchMap)catchMap.setView([S.catchPos.lat,S.catchPos.lng],Math.max(catchMap.getZoom(),17))}
   if(!S.catchPos&&catchMarker)catchMarker.setOpacity(.35);
-  if(S.catchPos){const near=S.spots.filter(sp=>sp.statut!=="ban").map(sp=>({sp,d:distKm(sp,S.catchPos)})).sort((a,b)=>a.d-b.d)[0];
-    const sel=document.getElementById("c-spot");if(near&&near.d<3&&sel&&sel.value!==near.sp.id)sel.value=near.sp.id}
+  if(S.catchPos){const sel=document.getElementById("c-spot"),cur=sel&&spotById(sel.value);
+    if(!(cur&&spotDist(cur,S.catchPos)<0.15)){const near=S.spots.filter(sp=>sp.statut!=="ban").map(sp=>({sp,d:spotDist(sp,S.catchPos)})).sort((a,b)=>a.d-b.d)[0];
+      if(near&&near.d<3&&sel&&sel.value!==near.sp.id){sel.value=near.sp.id;drawCatchRoute()}}}
   updateCatchPosInfo();refreshCatchWx();
 }
 function updateCatchPosInfo(){
   const el=document.getElementById("c-posinfo");if(!el)return;const sp=spotById((document.getElementById("c-spot")||{}).value),p=S.catchPos;
   if(!p){el.innerHTML='<span class="muted">L\'endroit exact ne sera pas enregistré (seulement le spot).</span>';return}
   const src={photo:"position lue dans la photo",gps:"position du téléphone",manuel:"placé à la main",spot:"sur le spot"}[p.src]||"";
-  const d=sp?distKm(sp,p):null,z=sp&&d<3?zoneAt(sp,p):null;
-  el.innerHTML=`📍 <b>${esc(src)}</b>${sp&&d!=null?` · ${d<1?Math.round(d*1000)+" m":d.toFixed(1)+" km"} de « ${esc(sp.nom)} »`:""}${z?` · zone <b>${esc(z.label)}${z.num?" (n° "+z.num+")":""}</b>`:""}${sp&&d>3?' · <span style="color:var(--warn)">loin du spot choisi : vérifie le spot</span>':""}`;
+  const d=sp?spotDist(sp,p):null,z=sp&&d<3?zoneAt(sp,p):null,pr=isRoute(sp)?projOnRoute(sp.trace,p):null;
+  el.innerHTML=`📍 <b>${esc(src)}</b>${pr?` · à <b>${fmtKm(pr.along)}</b> du départ du parcours${pr.d>40?`, à ${fmtKm(pr.d)} du tracé`:""}`:sp&&d!=null?` · ${d<1?Math.round(d*1000)+" m":d.toFixed(1)+" km"} de « ${esc(sp.nom)} »`:""}${z?` · zone <b>${esc(z.label)}${z.num?" (n° "+z.num+")":""}</b>`:""}${sp&&d>3?' · <span style="color:var(--warn)">loin du spot choisi : vérifie le spot</span>':""}`;
 }
 let cwxTimer=null;
 function refreshCatchWx(){clearTimeout(cwxTimer);cwxTimer=setTimeout(async()=>{
@@ -1120,7 +1136,7 @@ function updateCatchZone(){updateCatchPosInfo();return;
 }
 function catchForm(spotId){
   let spots=S.spots.filter(s=>s.statut!=="ban");
-  if(S.pos)spots=spots.sort((a,b)=>distKm(S.pos,a)-distKm(S.pos,b));
+  if(S.pos)spots=spots.sort((a,b)=>spotDist(a,S.pos)-spotDist(b,S.pos));
   const sel=spotId||(spots[0]&&spots[0].id);
   const lures=(S.gear[S.user.id]||[]).filter(g=>g.type==="Leurre");
   const lic=licenceStatus(S.licence);
@@ -1131,7 +1147,7 @@ function catchForm(spotId){
     <img id="c-prev" alt="" hidden style="border-radius:12px">
     <div id="c-exif" class="alert info small" hidden></div>
     <label class="f">Date et heure de la prise<input type="datetime-local" id="c-when" value="${localISO(new Date())}" max="${localISO(new Date())}"></label>
-    <label class="f">Spot<select id="c-spot">${spots.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.nom)}${S.pos?" ("+distKm(S.pos,s).toFixed(1)+" km)":""}</option>`).join("")}</select></label>
+    <label class="f">Spot<select id="c-spot">${spots.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${isRoute(s)?"🛶 ":""}${esc(s.nom)}${S.pos?" ("+spotDist(s,S.pos).toFixed(1)+" km)":""}</option>`).join("")}</select></label>
     ${spots.length?"":`<div class="alert warn">Crée d'abord un spot depuis la carte.</div>`}
     <fieldset class="panel stack" style="margin:0;padding:12px"><legend class="lbl">Endroit exact de la prise</legend>
       <p class="small muted" style="margin:0">Fais glisser l'épingle, ou touche la carte, à l'endroit où le poisson a été pris.</p>
@@ -1457,8 +1473,141 @@ function profileView(u){
 }
 profileView.loading={};
 
+/* ================= Parcours float tube ================= */
+const ROUTE_COL={prevu:"#E07B1E",fait:"#1E88A8"},FT_SPEED=1.8; // km/h, vitesse moyenne d'un float tube
+const isRoute=s=>!!(s&&s.parcours&&Array.isArray(s.trace)&&s.trace.length>1);
+function routeLen(tr){let d=0;for(let i=1;i<tr.length;i++)d+=distKm({lat:tr[i-1][0],lng:tr[i-1][1]},{lat:tr[i][0],lng:tr[i][1]});return d*1000}
+// Point le plus proche du tracé : distance au tracé et distance depuis le départ (en mètres)
+function projOnRoute(tr,p){
+  const ky=110540,kx=111320*Math.cos(p.lat*rad);let best=null,acc=0;
+  for(let i=1;i<tr.length;i++){const a={x:(tr[i-1][1]-p.lng)*kx,y:(tr[i-1][0]-p.lat)*ky},b={x:(tr[i][1]-p.lng)*kx,y:(tr[i][0]-p.lat)*ky},dx=b.x-a.x,dy=b.y-a.y,L2=dx*dx+dy*dy||1e-9;
+    let t=-(a.x*dx+a.y*dy)/L2;t=Math.max(0,Math.min(1,t));const x=a.x+t*dx,y=a.y+t*dy,d=Math.hypot(x,y),seg=Math.sqrt(L2);
+    if(!best||d<best.d)best={d,along:acc+t*seg,lat:p.lat+y/ky,lng:p.lng+x/kx};acc+=seg}
+  return best;
+}
+const fmtKm=m=>m<1000?Math.round(m)+" m":(m/1000).toFixed(1).replace(".",",")+" km";
+const fmtDur=h=>{const m=Math.round(h*60);return m<60?m+" min":Math.floor(m/60)+" h "+String(m%60).padStart(2,"0")};
+function spotDist(s,p){if(isRoute(s)){const pr=projOnRoute(s.trace,p);return pr?pr.d/1000:distKm(s,p)}return distKm(s,p)}
+
+/* ---- Tracé sur la carte ---- */
+let drawLayer=null;
+function startDraw(){S.draw={points:[]};S.addMode=false;if(drawLayer)drawLayer.clearLayers();else drawLayer=L.layerGroup().addTo(map);document.getElementById("map").classList.add("adding");render();scrollTo(0,0);toast("Touche l'eau point par point : départ, virages, arrivée")}
+function redrawDraw(){if(!drawLayer)return;drawLayer.clearLayers();const pts=S.draw?S.draw.points:[];if(!pts.length)return;
+  L.polyline(pts,{color:ROUTE_COL.prevu,weight:5,opacity:.9,dashArray:"8 6"}).addTo(drawLayer);
+  pts.forEach((p,i)=>L.circleMarker(p,{radius:i===0||i===pts.length-1?8:5,color:"#fff",weight:2,fillColor:i===0?"#2E7D4F":i===pts.length-1?"#C2362B":ROUTE_COL.prevu,fillOpacity:1}).addTo(drawLayer))}
+function endDraw(){S.draw=null;if(drawLayer)drawLayer.clearLayers();const m=document.getElementById("map");if(m)m.classList.remove("adding")}
+function parseGPX(txt){
+  const doc=new DOMParser().parseFromString(txt,"application/xml");let pts=[...doc.querySelectorAll("trkpt")];if(!pts.length)pts=[...doc.querySelectorAll("rtept")];
+  const tr=pts.map(p=>[+(+p.getAttribute("lat")).toFixed(6),+(+p.getAttribute("lon")).toFixed(6)]).filter(p=>isFinite(p[0])&&isFinite(p[1]));
+  const step=Math.max(1,Math.ceil(tr.length/1500)),out=tr.filter((_,i)=>i%step===0);if(tr.length&&out[out.length-1]!==tr[tr.length-1])out.push(tr[tr.length-1]);
+  const t=doc.querySelector("trkpt time, rtept time, metadata time"),nm=doc.querySelector("trk > name, rte > name, metadata > name");
+  return {trace:out,date:t?new Date(t.textContent):null,nom:nm?nm.textContent.trim():""};
+}
+function routeForm(a){
+  const ed=a.edit?spotById(a.edit):null,tr=ed?ed.trace:a.trace,st=tr[0],wb=getWaterBody(st[0],st[1]);
+  const faite=ed?ed.sortie_faite:!!a.faite,dt=ed&&ed.sortie_date?new Date(ed.sortie_date):a.date||null;
+  const nomDef=ed?ed.nom:(a.nom||("Parcours "+(wb&&wb.name?wb.name:"float tube")));
+  return `<div class="sheet" role="dialog"><div class="bar"><button class="btn sm" data-act="${ed?"back-spot":"route-cancel"}" ${ed?`data-spot="${ed.id}"`:""}>←</button><span class="t">${ed?"Modifier le parcours":"Nouveau parcours float tube"}</span></div>
+  <form class="wrap stack" id="route-form" style="padding-top:16px" ${ed?`data-id="${ed.id}"`:""}>
+    <div class="kv"><div><span class="small muted">Distance</span><b>${fmtKm(routeLen(tr))}</b></div><div><span class="small muted">Navigation estimée</span><b>${fmtDur(routeLen(tr)/1000/FT_SPEED)}</b></div><div><span class="small muted">Points</span><b>${tr.length}</b></div></div>
+    <label class="f">Nom du parcours<input id="rt-nom" required maxlength="80" value="${esc(nomDef)}"></label>
+    <div class="seg" role="group" aria-label="Sortie"><button type="button" data-rtk="prevu" aria-pressed="${!faite}">Sortie prévue</button><button type="button" data-rtk="fait" aria-pressed="${faite}">Sortie déjà faite</button></div>
+    <input type="hidden" id="rt-faite" value="${faite?"1":""}">
+    <label class="f"><span id="rt-date-l">${faite?"Date et heure de la sortie":"Date et heure de départ prévues"}</span><input type="datetime-local" id="rt-date" value="${dt?localISO(dt):""}"></label>
+    <p class="small muted" id="rt-sun" style="margin:0"></p>
+    <button class="btn sm" type="button" data-act="rt-sunrise">🌅 Départ au lever du soleil (heure légale de pêche)</button>
+    <label class="f">Mise à l'eau / accès<input id="rt-mise" value="${esc(ed?ed.mise_eau||"":"")}" placeholder="ex. Cale près du pont, parking"></label>
+    <label class="f">Notes<textarea id="rt-note" maxlength="500" placeholder="ex. Retour en voiture par la D177, courant fort après le moulin">${esc(ed?ed.float_note||"":"")}</textarea></label>
+    <label class="f">Visibilité<select id="rt-vis"><option value="public">Visible par le groupe</option><option value="prive" ${ed&&ed.prive?"selected":""}>Privé (moi seul)</option></select></label>
+    <button class="btn primary wide" type="submit">${ed?"Enregistrer les modifications":"Enregistrer le parcours"}</button>
+    ${ed?"":`<input type="hidden" id="rt-trace" value="${esc(JSON.stringify(tr))}">`}
+  </form></div>`;
+}
+function updateRouteSun(){
+  const el=document.getElementById("rt-sun"),inp=document.getElementById("rt-date");if(!el||!inp)return;
+  const f=document.getElementById("route-form"),tr=f.dataset.id?spotById(f.dataset.id).trace:JSON.parse(document.getElementById("rt-trace").value);
+  const d=inp.value?new Date(inp.value):new Date(Date.now()+dayMs),st=sunTimes(d,tr[0][0],tr[0][1]),open=new Date(st.rise.getTime()-30*6e4);
+  el.innerHTML=`${d.toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})} : lever du soleil <b>${hhmm(st.rise)}</b>, pêche autorisée dès <b>${hhmm(open)}</b> (30 min avant le lever), coucher ${hhmm(st.set)}.`;
+}
+
+/* ---- Météo d'une sortie ---- */
+const RWX={};
+function routeWx(s){
+  const d=s.sortie_date?new Date(s.sortie_date):null;if(!d)return null;
+  const k=s.id+"|"+d.toISOString().slice(0,13);if(RWX[k])return RWX[k];
+  const days=(d-Date.now())/dayMs;if(days>15)return RWX[k]={far:true};
+  RWX[k]={loading:true};
+  (async()=>{try{
+    const old=Date.now()-d.getTime()>80*dayMs,base=old?"https://archive-api.open-meteo.com/v1/archive":"https://api.open-meteo.com/v1/forecast",day=d.toISOString().slice(0,10);
+    const j=await fetchJSON(`${base}?latitude=${s.lat.toFixed(3)}&longitude=${s.lng.toFixed(3)}&hourly=temperature_2m,wind_speed_10m,wind_gusts_10m,precipitation,weather_code,cloud_cover,pressure_msl&timezone=GMT&start_date=${day}&end_date=${day}`);
+    const h=j.hourly,t0=d.getTime(),dur=Math.max(2,routeLen(s.trace)/1000/FT_SPEED+2)*36e5;
+    const idx=h.time.map((x,i)=>({i,t:new Date(x+"Z").getTime()})).filter(o=>o.t>=t0-36e5&&o.t<=t0+dur).map(o=>o.i);
+    const pick=a=>idx.map(i=>a[i]).filter(v=>v!=null);
+    const wind=Math.max(...pick(h.wind_speed_10m)),gust=Math.max(...pick(h.wind_gusts_10m)),rain=pick(h.precipitation).reduce((a,b)=>a+b,0),storm=pick(h.weather_code).some(c=>c>=95),temps=pick(h.temperature_2m);
+    RWX[k]={ok:true,wind,gust,rain,storm,tmin:Math.min(...temps),tmax:Math.max(...temps),hours:idx.length};
+  }catch(e){RWX[k]={error:true}}scheduleRender()})();
+  return RWX[k];
+}
+function routeChecks(s){
+  const out=[],tr=s.trace;
+  S.spots.filter(o=>o.id!==s.id&&!isRoute(o)&&(o.statut==="ban"||o.float==="ban")).forEach(o=>{const pr=projOnRoute(tr,o);if(pr&&pr.d<200)out.push({lvl:"ban",t:`« ${o.nom} » (${o.statut==="ban"?"pêche interdite":"float tube interdit"}) à ${fmtKm(pr.d)} du parcours, à ${fmtKm(pr.along)} du départ${o.raison?" : "+o.raison:""}`})});
+  const fo=floatOf(s);if(fo.k==="ban")out.push({lvl:"ban",t:"Float tube interdit sur ce cours d'eau"});else if(fo.k==="unk")out.push({lvl:"warn",t:"Statut float tube non renseigné pour ce cours d'eau : vérifie auprès de la fédération"});
+  const ow=(AZ[s.lat.toFixed(4)+","+s.lng.toFixed(4)]||{}).zones||[];ow.filter(z=>z.ban).forEach(z=>{const pr=projOnRoute(tr,z);if(pr&&pr.d<150)out.push({lvl:"ban",t:`Ouvrage hydraulique (écluse, barrage) à ${fmtKm(pr.along)} du départ : passage interdit, prévoir de sortir de l'eau`})});
+  const W=routeWx(s);
+  if(W&&W.ok){if(W.storm)out.push({lvl:"ban",t:"Orage prévu pendant la sortie : ne pas aller sur l'eau"});
+    if(W.gust>=40||W.wind>=25)out.push({lvl:"ban",t:`Vent fort prévu (${Math.round(W.wind)} km/h, rafales ${Math.round(W.gust)} km/h) : sortie déconseillée`});
+    else if(W.wind>=18)out.push({lvl:"warn",t:`Vent soutenu (${Math.round(W.wind)} km/h) : reste près des berges`});
+    if(W.rain>=5)out.push({lvl:"warn",t:`Pluie prévue (${W.rain.toFixed(1)} mm)`});}
+  const wa=getWater(s.lat,s.lng);if(wa.hydro&&wa.hydro.q!=null&&wa.hydro.q>50)out.push({lvl:"warn",t:`Débit élevé à la station ${wa.hydro.station} (${wa.hydro.q.toFixed(0)} m³/s) : courant fort possible`});
+  return out;
+}
+function routePanel(s){
+  const tr=s.trace,len=routeLen(tr),d=s.sortie_date?new Date(s.sortie_date):null,ref=d||new Date(Date.now()+dayMs),st=sunTimes(ref,tr[0][0],tr[0][1]);
+  const open=new Date(st.rise.getTime()-30*6e4),close=new Date(st.set.getTime()+30*6e4),nav=len/1000/FT_SPEED;
+  const back=d?new Date(d.getTime()+nav*36e5):null,W=routeWx(s),checks=routeChecks(s);
+  const cs=S.catches.filter(k=>k.spot_id===s.id).map(k=>({k,pr:k.lat!=null?projOnRoute(tr,k):null})).sort((a,b)=>(a.pr?a.pr.along:1e9)-(b.pr?b.pr.along:1e9));
+  const end=tr[tr.length-1];
+  return `<div id="routemap" style="height:min(46vh,340px);border-radius:12px;border:1px solid var(--line);position:relative;z-index:0"></div>
+  <div class="row small" style="margin-top:8px;gap:6px"><span class="chip ok"><span class="dot" style="background:#2E7D4F"></span>Départ</span><span class="chip ban"><span class="dot" style="background:#C2362B"></span>Arrivée</span><span class="chip ghost"><span class="dot" style="background:#2F7FD0"></span>Prises (${cs.length})</span></div>
+  <div class="kv" style="margin-top:12px">
+    <div><span class="small muted">Distance</span><b>${fmtKm(len)}</b></div>
+    <div><span class="small muted">Navigation (≈ ${String(FT_SPEED).replace(".",",")} km/h)</span><b>${fmtDur(nav)}</b><span class="small muted">sans les arrêts pêche</span></div>
+    <div><span class="small muted">${s.sortie_faite?"Sortie faite le":"Sortie prévue le"}</span><b class="t">${d?dateFr(d):"Date à fixer"}</b></div>
+    <div><span class="small muted">Lever du soleil${d?"":" (demain)"}</span><b>${hhmm(st.rise)}</b><span class="small muted">pêche dès ${hhmm(open)}</span></div>
+    <div><span class="small muted">Coucher</span><b>${hhmm(st.set)}</b><span class="small muted">pêche jusqu'à ${hhmm(close)}</span></div>
+    ${back&&!s.sortie_faite?`<div><span class="small muted">Arrivée estimée</span><b>${hhmm(back)}</b><span class="small muted">+ temps de pêche</span></div>`:""}
+  </div>
+  ${d&&!s.sortie_faite&&d<open&&sameDay(d,open)?`<div class="alert warn" style="margin-top:10px">Départ prévu avant ${hhmm(open)} : tu peux te mettre à l'eau, mais la pêche n'est autorisée qu'à partir de 30 min avant le lever du soleil.</div>`:""}
+  ${!s.sortie_faite?`<h3>Vérifications</h3><div class="stack" style="gap:8px">
+    ${W&&W.loading?`<div class="alert info small">Recherche de la météo de la sortie…</div>`:W&&W.far?`<div class="alert info small">Météo disponible 15 jours avant la sortie.</div>`:W&&W.ok?`<div class="alert info small">Météo pendant la sortie : ${Math.round(W.tmin)} à ${Math.round(W.tmax)} °C, vent jusqu'à ${Math.round(W.wind)} km/h (rafales ${Math.round(W.gust)}), pluie ${W.rain.toFixed(1)} mm.</div>`:!d?`<div class="alert info small">Fixe une date pour voir la météo de la sortie.</div>`:""}
+    ${checks.map(c=>`<div class="alert ${c.lvl} small">${esc(c.t)}</div>`).join("")||`<div class="alert info small">Aucun obstacle connu sur le parcours.</div>`}
+    <div class="alert info small">Gilet de sauvetage obligatoire · préviens quelqu'un de ton parcours et de ton heure de retour · ${distKm({lat:tr[0][0],lng:tr[0][1]},{lat:end[0],lng:end[1]})>0.3?"prévois une voiture à l'arrivée ou le retour à pied":"retour au point de départ"}.</div></div>`:
+    (()=>{const W2=W&&W.ok?W:null;return W2?`<div class="alert info small" style="margin-top:10px">Météo pendant la sortie : ${Math.round(W2.tmin)} à ${Math.round(W2.tmax)} °C, vent jusqu'à ${Math.round(W2.wind)} km/h, pluie ${W2.rain.toFixed(1)} mm.</div>`:""})()}
+  <div class="grid2" style="margin-top:12px">
+    <a class="btn" href="${waze({lat:tr[0][0],lng:tr[0][1]})}" target="_blank" rel="noopener">Waze : mise à l'eau</a>
+    <a class="btn" href="${waze({lat:end[0],lng:end[1]})}" target="_blank" rel="noopener">Waze : arrivée</a>
+    ${!s.sortie_faite?`<button class="btn" data-act="route-share" data-spot="${s.id}">Proposer la sortie au groupe</button>`:""}
+    ${s.owner===S.user.id&&!s.sortie_faite?`<button class="btn" data-act="route-done" data-spot="${s.id}">Marquer la sortie comme faite</button>`:""}
+  </div>
+  <h3>Prises sur ce parcours</h3>
+  ${cs.length?`<div class="stack">${cs.map(({k,pr})=>`<div class="panel" style="padding:10px"><b>${esc(SP[k.espece]?SP[k.espece].nom:k.espece)}${k.taille?" "+esc(k.taille)+" cm":""}</b> · ${esc(k.leurre||"leurre non précisé")}<div class="small muted">${pr?"à "+fmtKm(pr.along)+" du départ":"endroit non précisé"} · ${dateFr(k.caught_at)} · ${esc(pseudo(k.owner))}</div></div>`).join("")}</div>`:`<p class="muted small">Pas encore de prise. Ajoute-les avec « + Prise ici » et place l'épingle sur le parcours.</p>`}`;
+}
+const sameDay=(a,b)=>a.toDateString()===b.toDateString();
+let routeMap=null;
+function initRouteMap(s){
+  const el=document.getElementById("routemap");if(!el||!isRoute(s))return;if(routeMap){routeMap.remove();routeMap=null}
+  routeMap=L.map(el,{zoomControl:true});
+  L.tileLayer(ign("ORTHOIMAGERY.ORTHOPHOTOS","image/jpeg"),{maxZoom:20,maxNativeZoom:19,attribution:"© IGN"}).addTo(routeMap);
+  const col=s.sortie_faite?ROUTE_COL.fait:ROUTE_COL.prevu,tr=s.trace;
+  L.polyline(tr,{color:"#fff",weight:8,opacity:.6}).addTo(routeMap);L.polyline(tr,{color:col,weight:5}).addTo(routeMap);
+  L.circleMarker(tr[0],{radius:9,color:"#fff",weight:3,fillColor:"#2E7D4F",fillOpacity:1}).addTo(routeMap).bindTooltip("Départ");
+  L.circleMarker(tr[tr.length-1],{radius:9,color:"#fff",weight:3,fillColor:"#C2362B",fillOpacity:1}).addTo(routeMap).bindTooltip("Arrivée");
+  S.catches.filter(k=>k.spot_id===s.id&&k.lat!=null).forEach(k=>L.circleMarker([k.lat,k.lng],{radius:7,color:"#fff",weight:2,fillColor:"#2F7FD0",fillOpacity:1}).addTo(routeMap).bindTooltip(`${esc(SP[k.espece]?SP[k.espece].nom:k.espece)} ${k.taille?esc(k.taille)+" cm":""} · ${esc(k.leurre||"")}`));
+  routeMap.fitBounds(L.polyline(tr).getBounds(),{padding:[30,30],maxZoom:17});setTimeout(()=>routeMap&&routeMap.invalidateSize(),60);
+}
+
 /* ================= Fiches ================= */
-function openSheet(type,arg){S.formTouched=false;if(zoneMap){zoneMap.remove();zoneMap=null}S.sheet={type,arg};if(type==="spot")S.spotTab=S.spotTab&&S.sheetPrevId===arg.id?S.spotTab:"cond";if(type==="spot")S.sheetPrevId=arg.id;S.sheetHTML=null;renderSheet(true);document.body.style.overflow="hidden"}
+function openSheet(type,arg){S.formTouched=false;if(zoneMap){zoneMap.remove();zoneMap=null}if(routeMap){routeMap.remove();routeMap=null}S.sheet={type,arg};if(type==="spot")S.spotTab=S.spotTab&&S.sheetPrevId===arg.id?S.spotTab:(isRoute(spotById(arg.id))?"parcours":"cond");if(type==="spot")S.sheetPrevId=arg.id;S.sheetHTML=null;renderSheet(true);document.body.style.overflow="hidden"}
 let zoneMap=null,zoneLayer=null,zoneSpot=null;
 function initZoneMap(s){
   const el=document.getElementById("zonemap");if(!el||!s)return;
@@ -1495,29 +1644,33 @@ function zoneForm(a){
     <button class="btn primary wide" type="submit">Enregistrer la zone</button>
   </form></div>`;
 }
-function closeSheet(){if(zoneMap){zoneMap.remove();zoneMap=null}if(catchMap){catchMap.remove();catchMap=null;catchMarker=null}S.zoneAdd=false;S.sheet=null;S.sheetHTML=null;document.getElementById("sheet").innerHTML="";document.body.style.overflow="";if(tempMarker){tempMarker.remove();tempMarker=null}}
+function closeSheet(){if(zoneMap){zoneMap.remove();zoneMap=null}if(routeMap){routeMap.remove();routeMap=null}if(catchMap){catchMap.remove();catchMap=null;catchMarker=null}S.zoneAdd=false;S.sheet=null;S.sheetHTML=null;document.getElementById("sheet").innerHTML="";document.body.style.overflow="";if(tempMarker){tempMarker.remove();tempMarker=null}}
 function renderSheet(force){
   const el=document.getElementById("sheet");if(!S.sheet){el.innerHTML="";return}
   const {type,arg}=S.sheet;
   if(type==="zoneForm"){if(!force)return;el.innerHTML=zoneForm(arg);return}
+  if(type==="routeForm"){if(!force)return;el.innerHTML=routeForm(arg);updateRouteSun();return}
   if(type==="catchForm"||type==="spotForm"||type==="report"){if(!force)return;
     el.innerHTML=type==="catchForm"?catchForm(arg&&arg.id):type==="spotForm"?spotForm(arg.lat,arg.lng,arg.edit?spotById(arg.edit):null):reportForm(arg.id);relache=true;if(type==="catchForm"){S.catchWx=null;setTimeout(initCatchMap,0)}return}
   const ae=document.activeElement;if(ae&&el.contains(ae)&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName))return;
   let key=type+"|"+(arg&&arg.id)+"|"+S.spotTab+"|"+S.zoneAdd;
   if(type==="spot"&&S.spotTab==="zones"){const sp=spotById(arg.id);if(sp){const A=getAutoZones(sp);key+="|"+(A.loading?"L":A.error?"E":A.zones.length)+"|"+(conditions(sp,new Date())?1:0)+"|"+S.zones.length}}
   if(!force&&type==="spot"&&S.spotTab==="zones"&&S.sheetKey===key&&zoneMap){refreshZoneMap();return}
+  if(type==="spot"&&S.spotTab==="parcours"){const sp=spotById(arg.id);if(sp&&isRoute(sp)){const W=routeWx(sp),wa=getWater(sp.lat,sp.lng);key+="|"+(W?(W.ok?"ok":W.loading?"L":"x"):"-")+"|"+(wa.loading?"L":"d")+"|"+S.catches.length+"|"+(sp.sortie_date||"")+"|"+sp.sortie_faite+"|"+sp.nom}
+    if(!force&&S.sheetKey===key&&routeMap)return}
   const sc=el.firstElementChild?el.firstElementChild.scrollTop:0;
-  if(zoneMap){zoneMap.remove();zoneMap=null}
+  if(zoneMap){zoneMap.remove();zoneMap=null}if(routeMap){routeMap.remove();routeMap=null}
   el.innerHTML=type==="spot"?spotSheet(arg.id):type==="waze"?wazeConfirm(arg.id):type==="zoneForm"?zoneForm(arg):"";
   S.sheetKey=key;
   if(el.firstElementChild)el.firstElementChild.scrollTop=sc;
   if(type==="spot"&&S.spotTab==="zones")initZoneMap(spotById(arg.id));
+  if(type==="spot"&&S.spotTab==="parcours")initRouteMap(spotById(arg.id));
 }
 
 /* ================= Actions ================= */
 let relache=true;
 document.addEventListener("click",async e=>{
-  const t=e.target.closest("[data-milieu],[data-float],[data-zl],[data-tab],[data-act],[data-spot],[data-spottab],[data-filter],[data-rel],[data-auth],[data-base],[data-layer]");
+  const t=e.target.closest("[data-rtk],[data-milieu],[data-float],[data-zl],[data-tab],[data-act],[data-spot],[data-spottab],[data-filter],[data-rel],[data-auth],[data-base],[data-layer]");
   if(!t||t.disabled)return;
   const d=t.dataset;
   if(d.auth){S.authMode=d.auth;render();return}
@@ -1528,6 +1681,7 @@ document.addEventListener("click",async e=>{
   if(d.rel){relache=d.rel==="1";document.querySelectorAll("[data-rel]").forEach(b=>b.setAttribute("aria-pressed",b===t));return}
   if(d.spottab){S.spotTab=d.spottab;renderSheet();return}
   if(d.milieu&&S.tempSpot){S.tempSpot.milieu=d.milieu;S.tempSpot.type=d.milieu==="mer"?"mer":["etang","lac"].includes(d.milieu)?"etang":"riviere";renderSheet(true);return}
+  if(d.rtk){document.getElementById("rt-faite").value=d.rtk==="fait"?"1":"";document.querySelectorAll("[data-rtk]").forEach(b=>b.setAttribute("aria-pressed",b===t));document.getElementById("rt-date-l").textContent=d.rtk==="fait"?"Date et heure de la sortie":"Date et heure de départ prévues";return}
   if(d.float){document.getElementById("s-float").value=d.float;document.querySelectorAll("[data-float]").forEach(b=>b.setAttribute("aria-pressed",b===t));S.formTouched=true;return}
   if(d.zl){S.zl[d.zl]=!S.zl[d.zl];renderSheet(true);return}
   if(!d.act&&d.spot){openSheet("spot",{id:d.spot});return}
@@ -1565,9 +1719,20 @@ document.addEventListener("click",async e=>{
         else{st.className="alert warn small";st.textContent=`${r.site} ne permet pas la lecture automatique : j'ai repris ${r.nom?"le nom du produit depuis le lien":"le lien"}. Vérifie le nom, choisis le type et ajoute une photo si tu veux.`}
       }catch(err){st.className="alert warn small";st.textContent=err.message||"Lecture impossible"}break}
     case "cpos-gps":if(S.pos)setCatchPos({...S.pos,src:"gps"},true);else{locate(false);toast("Recherche de ta position… réessaie dans un instant")}break;
-    case "cpos-spot":{const sp=spotById(document.getElementById("c-spot").value);if(sp)setCatchPos({lat:sp.lat,lng:sp.lng,src:"spot"},true);break}
+    case "cpos-spot":{const sp=spotById(document.getElementById("c-spot").value);if(sp){const m=isRoute(sp)?sp.trace[Math.floor(sp.trace.length/2)]:null;setCatchPos(m?{lat:m[0],lng:m[1],src:"spot"}:{lat:sp.lat,lng:sp.lng,src:"spot"},true)}break}
     case "cpos-none":setCatchPos(null);break;
-    case "edit-spot":{const sp=spotById(d.spot);openSheet("spotForm",{lat:sp.lat,lng:sp.lng,edit:sp.id});break}
+    case "draw-start":startDraw();break;
+    case "draw-undo":if(S.draw){S.draw.points.pop();redrawDraw();render()}break;
+    case "draw-cancel":endDraw();render();break;
+    case "draw-done":{const pts=S.draw.points.slice();endDraw();render();getWaterBody(pts[0][0],pts[0][1]);openSheet("routeForm",{trace:pts});break}
+    case "route-cancel":closeSheet();break;
+    case "rt-sunrise":{const f=document.getElementById("route-form"),tr=f.dataset.id?spotById(f.dataset.id).trace:JSON.parse(document.getElementById("rt-trace").value),inp=document.getElementById("rt-date");
+      let d=inp.value?new Date(inp.value):new Date(Date.now()+dayMs);d.setHours(12,0,0,0);const st=sunTimes(d,tr[0][0],tr[0][1]);inp.value=localISO(new Date(st.rise.getTime()-30*6e4));updateRouteSun();break}
+    case "route-share":{const sp=spotById(d.spot),dt=sp.sortie_date?new Date(sp.sortie_date):null,st=dt?sunTimes(dt,sp.lat,sp.lng):null;
+      const txt=`🛶 Sortie float tube « ${sp.nom} »${dt?" le "+dateFr(dt):""} : ${fmtKm(routeLen(sp.trace))}, environ ${fmtDur(routeLen(sp.trace)/1000/FT_SPEED)} de navigation${st?", lever du soleil "+hhmm(st.rise):""}. Qui vient ?`;
+      const {error}=await sb.from("peche_messages").insert({owner:S.user.id,text:txt,spot_id:sp.id});if(error)throw error;toast("Sortie proposée dans la discussion");break}
+    case "route-done":{const sp=spotById(d.spot);const {error}=await sb.from("peche_spots").update({sortie_faite:true,sortie_date:sp.sortie_date||new Date().toISOString()}).eq("id",sp.id);if(error)throw error;await loadSpots();renderSheet(true);toast("Sortie marquée comme faite");break}
+    case "edit-spot":{const sp=spotById(d.spot);if(isRoute(sp))openSheet("routeForm",{edit:sp.id});else openSheet("spotForm",{lat:sp.lat,lng:sp.lng,edit:sp.id});break}
     case "zone-add":S.zoneAdd=true;renderSheet(true);toast("Touche la carte à l'endroit de la zone");break;
     case "zone-cancel":S.zoneAdd=false;renderSheet(true);break;
     case "zone-back":S.spotTab="zones";S.sheet={type:"spot",arg:{id:d.spot}};renderSheet(true);break;
@@ -1594,8 +1759,12 @@ document.addEventListener("change",async e=>{
     if(!(ex&&ex.date))info.push("Pas d'heure dans la photo : vérifie la date et l'heure");
     refreshCatchWx();
     if(info.length){box.textContent=info.join(" · ");box.hidden=false}}
-  if(e.target.id==="c-spot"){if(!S.catchPos||S.catchPos.src==="spot"||S.catchPos.src==="gps"&&S.pos&&spotById(e.target.value)&&distKm(S.pos,spotById(e.target.value))>3){const sp=spotById(e.target.value);if(sp)setCatchPos({lat:sp.lat,lng:sp.lng,src:"spot"},true)}else{updateCatchPosInfo();refreshCatchWx()}}
+  if(e.target.id==="c-spot"){drawCatchRoute();if(!S.catchPos||S.catchPos.src==="spot"||S.catchPos.src==="gps"&&S.pos&&spotById(e.target.value)&&spotDist(spotById(e.target.value),S.pos)>3){const sp=spotById(e.target.value);if(sp)setCatchPos({lat:sp.lat,lng:sp.lng,src:"spot"},true)}else{updateCatchPosInfo();refreshCatchWx()}}
   if(e.target.id==="c-when")refreshCatchWx();
+  if(e.target.id==="rt-date")updateRouteSun();
+  if(e.target.id==="gpx-in"&&e.target.files[0]){try{const g=parseGPX(await e.target.files[0].text());e.target.value="";if(g.trace.length<2)throw new Error("Aucune trace trouvée dans ce fichier");
+    getWaterBody(g.trace[0][0],g.trace[0][1]);if(map)map.fitBounds(L.polyline(g.trace).getBounds(),{padding:[30,30]});
+    openSheet("routeForm",{trace:g.trace,date:g.date&&!isNaN(g.date)?g.date:null,faite:!!(g.date&&g.date<new Date()),nom:g.nom});toast(`Trace importée : ${g.trace.length} points, ${fmtKm(routeLen(g.trace))}`)}catch(err){toast(err.message||"Fichier GPX illisible")}}
   if(e.target.id==="k-import"&&e.target.files[0]){const file=e.target.files[0],st=document.getElementById("k-status");const say=t=>{st.hidden=false;st.className="alert info small";st.textContent=t};
     try{say("Préparation de la lecture…");const r=await readLicenceFile(file,say);S.licImport=r.image;
       if(r.image){const pv=document.getElementById("k-prev");pv.src=URL.createObjectURL(r.image);pv.hidden=false}
@@ -1637,7 +1806,8 @@ document.addEventListener("submit",async e=>{
       const row={owner:S.user.id,spot_id:spot.id,espece:v("c-esp"),taille:+v("c-taille")||null,poids:+v("c-poids")||null,leurre:v("c-leurre")||null,technique:v("c-tech"),relache,caught_at:when.toISOString(),
         meteo:Object.assign(w?{temp:w.temp,press:w.press,trend:w.trend,wind:w.wind,dir:w.dir,cloud:w.cloud,water:w.water,rain:w.rainmm}:{},{moon:mo.name,illum:Math.round(mo.illum*100),mom:momentOf(when,st),hour:when.getHours()+when.getMinutes()/60})};
       const pos=S.catchPos;
-      if(pos&&distKm(pos,spot)<10){row.lat=pos.lat;row.lng=pos.lng;row.meteo.pos_src=pos.src||"gps";const z=distKm(pos,spot)<3?zoneAt(spot,pos):null;if(z)row.meteo.zone=z.label+(z.num?" (n° "+z.num+")":"")}
+      if(pos&&spotDist(spot,pos)<10){row.lat=pos.lat;row.lng=pos.lng;row.meteo.pos_src=pos.src||"gps";const z=spotDist(spot,pos)<3?zoneAt(spot,pos):null;if(z)row.meteo.zone=z.label+(z.num?" (n° "+z.num+")":"");
+        if(isRoute(spot)){const pr=projOnRoute(spot.trace,pos);if(pr)row.meteo.route_km=+(pr.along/1000).toFixed(2)}}
       else if(pos)toast("Endroit trop loin du spot choisi : seul le spot est enregistré");
       S.catchPos=null;S.catchWx=null;
       const blob=S.catchBlob;S.catchBlob=null;
@@ -1650,6 +1820,14 @@ document.addEventListener("submit",async e=>{
         if(err instanceof TypeError||!navigator.onLine){await idb.add({uid:S.user.id,row,blob});await countPending();toast("Pas de réseau : prise gardée, envoi automatique plus tard")}else throw err;
       }
       closeSheet();S.tab="prises";render();
+    }
+    if(f.id==="route-form"){
+      const ed=f.dataset.id?spotById(f.dataset.id):null,tr=ed?ed.trace:JSON.parse(v("rt-trace")),wb=getWaterBody(tr[0][0],tr[0][1]),dv=v("rt-date");
+      const row={nom:v("rt-nom"),parcours:true,trace:tr,lat:tr[0][0],lng:tr[0][1],distance_m:Math.round(routeLen(tr)),sortie_faite:!!v("rt-faite"),sortie_date:dv?new Date(dv).toISOString():null,
+        mise_eau:v("rt-mise")||null,float_note:v("rt-note")||null,prive:v("rt-vis")==="prive"};
+      if(!ed)Object.assign(row,{type:wb&&["etang","lac"].includes(wb.k)?"etang":wb&&wb.k==="mer"?"mer":"riviere",milieu:wb&&wb.k||null,nom_eau:wb&&wb.name||null,statut:"ok",float:"unk",cat:"2"});
+      if(ed){const {error}=await sb.from("peche_spots").update(row).eq("id",ed.id);if(error)throw error;await loadSpots();S.spotTab="parcours";openSheet("spot",{id:ed.id});toast("Parcours modifié")}
+      else{const {data,error}=await sb.from("peche_spots").insert({...row,owner:S.user.id}).select("id").single();if(error)throw error;await loadSpots();S.spotTab="parcours";S.sheetPrevId=data.id;openSheet("spot",{id:data.id});toast("Parcours enregistré : il apparaît comme un spot")}
     }
     if(f.id==="spot-form"){
       const row={nom:v("s-nom"),type:(["etang","lac"].includes(v("s-milieu"))&&v("s-type")==="riviere")?"etang":(v("s-milieu")==="mer"?"mer":v("s-type")),cat:v("s-cat"),statut:v("s-statut"),raison:v("s-raison")||null,carte:v("s-carte")||null,
