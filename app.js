@@ -656,11 +656,12 @@ function parseTiff(v,t){
 }
 const localISO=d=>{const z=new Date(d.getTime()-d.getTimezoneOffset()*6e4);return z.toISOString().slice(0,16)};
 async function histWeather(spot,when){
-  const day=x=>x.toISOString().slice(0,10),prev=new Date(when.getTime()-dayMs);
-  const j=await fetchJSON(`https://api.open-meteo.com/v1/forecast?latitude=${spot.lat.toFixed(3)}&longitude=${spot.lng.toFixed(3)}&hourly=temperature_2m,pressure_msl,wind_speed_10m,cloud_cover,precipitation&timezone=GMT&start_date=${day(prev)}&end_date=${day(when)}`);
+  const day=x=>x.toISOString().slice(0,10),prev=new Date(when.getTime()-dayMs),old=Date.now()-when.getTime()>80*dayMs;
+  const base=old?"https://archive-api.open-meteo.com/v1/archive":"https://api.open-meteo.com/v1/forecast";
+  const j=await fetchJSON(`${base}?latitude=${spot.lat.toFixed(3)}&longitude=${spot.lng.toFixed(3)}&hourly=temperature_2m,pressure_msl,wind_speed_10m,wind_direction_10m,cloud_cover,precipitation&timezone=GMT&start_date=${day(prev)}&end_date=${day(when)}`);
   const h=j.hourly,ts=h.time.map(x=>new Date(x+"Z").getTime());let i=ts.findIndex(x=>x>when.getTime())-1;if(i<0)i=ts.length-1;const i3=Math.max(0,i-3);
   const avg=h.temperature_2m.slice(Math.max(0,i-24),i+1).reduce((a,b)=>a+b,0)/Math.min(25,i+1);
-  return {temp:h.temperature_2m[i],press:h.pressure_msl[i],trend:h.pressure_msl[i]-h.pressure_msl[i3],wind:h.wind_speed_10m[i],cloud:h.cloud_cover[i],rainmm:h.precipitation[i],water:(WATER_T[when.getMonth()]*2+avg)/3};
+  return {temp:h.temperature_2m[i],press:h.pressure_msl[i],trend:h.pressure_msl[i]-h.pressure_msl[i3],wind:h.wind_speed_10m[i],dir:h.wind_direction_10m[i],cloud:h.cloud_cover[i],rainmm:h.precipitation[i],water:(WATER_T[when.getMonth()]*2+avg)/3};
 }
 async function compress(file,max=1280,q=.78){
   let src;
@@ -799,6 +800,7 @@ function locate(center=true){
   if(!navigator.geolocation){toast("La localisation n'est pas disponible sur cet appareil");return}
   navigator.geolocation.getCurrentPosition(p=>{
     S.pos={lat:p.coords.latitude,lng:p.coords.longitude};
+    if(catchMap&&(!S.catchPos||S.catchPos.src==="spot"))setCatchPos({...S.pos,src:"gps"},true);
     if(map){if(meMarker)meMarker.remove();meMarker=L.circleMarker([S.pos.lat,S.pos.lng],{radius:8,color:"#fff",weight:3,fillColor:"#2F7FD0",fillOpacity:1}).addTo(map).bindTooltip("Moi");
       if(center)map.setView([S.pos.lat,S.pos.lng],14)}
     scheduleRender();
@@ -1065,7 +1067,53 @@ function catchCard(x){
       ${me?`<div class="row" style="margin-top:8px"><button class="btn sm" data-act="share-catch" data-id="${x.id}">Partager</button><button class="btn sm" data-act="del-catch" data-id="${x.id}">Supprimer</button></div>`:""}
     </div></div>`;
 }
-function updateCatchZone(){
+/* ---- Carte de l'endroit exact et météo de la prise ---- */
+let catchMap=null,catchMarker=null;
+function initCatchMap(){
+  const el=document.getElementById("c-map");if(!el)return;if(catchMap){catchMap.remove();catchMap=null}
+  const sp=spotById((document.getElementById("c-spot")||{}).value),start=S.catchPos||S.pos||sp||{lat:47.95,lng:-1.85};
+  catchMap=L.map(el,{zoomControl:true}).setView([start.lat,start.lng],S.catchPos||S.pos?17:sp?16:10);
+  L.tileLayer(ign("ORTHOIMAGERY.ORTHOPHOTOS","image/jpeg"),{maxZoom:20,maxNativeZoom:19,attribution:"© IGN"}).addTo(catchMap);
+  catchMarker=L.marker([start.lat,start.lng],{draggable:true,autoPan:true}).addTo(catchMap);
+  if(!S.catchPos&&S.pos)S.catchPos={...S.pos,src:"gps"};
+  if(!S.catchPos)catchMarker.setOpacity(.35);
+  catchMarker.on("dragend",()=>{const p=catchMarker.getLatLng();setCatchPos({lat:p.lat,lng:p.lng,src:"manuel"},false)});
+  catchMap.on("click",e=>setCatchPos({lat:e.latlng.lat,lng:e.latlng.lng,src:"manuel"},false));
+  setTimeout(()=>catchMap&&catchMap.invalidateSize(),60);
+  updateCatchPosInfo();refreshCatchWx();
+}
+function setCatchPos(p,center){
+  S.catchPos=p?{lat:+p.lat.toFixed(6),lng:+p.lng.toFixed(6),src:p.src}:null;
+  if(S.catchPos&&catchMarker){catchMarker.setLatLng([S.catchPos.lat,S.catchPos.lng]);catchMarker.setOpacity(1);if(center&&catchMap)catchMap.setView([S.catchPos.lat,S.catchPos.lng],Math.max(catchMap.getZoom(),17))}
+  if(!S.catchPos&&catchMarker)catchMarker.setOpacity(.35);
+  if(S.catchPos){const near=S.spots.filter(sp=>sp.statut!=="ban").map(sp=>({sp,d:distKm(sp,S.catchPos)})).sort((a,b)=>a.d-b.d)[0];
+    const sel=document.getElementById("c-spot");if(near&&near.d<3&&sel&&sel.value!==near.sp.id)sel.value=near.sp.id}
+  updateCatchPosInfo();refreshCatchWx();
+}
+function updateCatchPosInfo(){
+  const el=document.getElementById("c-posinfo");if(!el)return;const sp=spotById((document.getElementById("c-spot")||{}).value),p=S.catchPos;
+  if(!p){el.innerHTML='<span class="muted">L\'endroit exact ne sera pas enregistré (seulement le spot).</span>';return}
+  const src={photo:"position lue dans la photo",gps:"position du téléphone",manuel:"placé à la main",spot:"sur le spot"}[p.src]||"";
+  const d=sp?distKm(sp,p):null,z=sp&&d<3?zoneAt(sp,p):null;
+  el.innerHTML=`📍 <b>${esc(src)}</b>${sp&&d!=null?` · ${d<1?Math.round(d*1000)+" m":d.toFixed(1)+" km"} de « ${esc(sp.nom)} »`:""}${z?` · zone <b>${esc(z.label)}${z.num?" (n° "+z.num+")":""}</b>`:""}${sp&&d>3?' · <span style="color:var(--warn)">loin du spot choisi : vérifie le spot</span>':""}`;
+}
+let cwxTimer=null;
+function refreshCatchWx(){clearTimeout(cwxTimer);cwxTimer=setTimeout(async()=>{
+  const box=document.getElementById("c-wx");if(!box)return;const sp=spotById((document.getElementById("c-spot")||{}).value),place=S.catchPos||sp;if(!place)return;
+  const now=new Date();let when=(document.getElementById("c-when")||{}).value?new Date(document.getElementById("c-when").value):now;if(!(when<=now))when=now;
+  const key=place.lat.toFixed(3)+","+place.lng.toFixed(3)+"|"+when.toISOString().slice(0,13);if(S.catchWx&&S.catchWx.key===key)return;
+  box.innerHTML='<div class="lbl">Météo au moment et à l\'endroit de la prise</div><p class="small muted" style="margin:6px 0 0">Recherche de la météo…</p>';
+  let w=null;try{w=await histWeather(place,when)}catch(e){}
+  const st=sunTimes(when,place.lat,place.lng),mo=moon(when),mom=momentOf(when,st);
+  S.catchWx={key,w,mo,mom,when};
+  const mN={aube:"aube",jour:"journée",crep:"crépuscule",nuit:"nuit"}[mom];
+  box.innerHTML=`<div class="lbl">Météo au moment et à l'endroit de la prise</div>
+    <p class="small" style="margin:6px 0 0"><b>${dateFr(when)}</b> · ${mN} · ${esc(mo.name)} (${Math.round(mo.illum*100)} %)</p>
+    ${w?`<div class="kv" style="margin-top:8px"><div><span class="small muted">Air</span><b>${Math.round(w.temp)} °C</b></div><div><span class="small muted">Pression</span><b>${Math.round(w.press)} hPa ${w.trend<-.6?"↘":w.trend>.6?"↗":"→"}</b></div>
+      <div><span class="small muted">Vent</span><b>${Math.round(w.wind)} km/h${w.dir!=null?" "+windDir(w.dir):""}</b></div><div><span class="small muted">Nuages</span><b>${Math.round(w.cloud)} %</b><span class="small muted">${w.rainmm>0?w.rainmm.toFixed(1)+" mm":"sec"}</span></div>
+      <div><span class="small muted">Eau (estimée)</span><b>${w.water.toFixed(0)} °C</b></div></div>`:`<p class="small muted" style="margin:6px 0 0">Météo indisponible pour l'instant (réseau). Elle sera recherchée à l'enregistrement.</p>`}`;
+},350)}
+function updateCatchZone(){updateCatchPosInfo();return;
   const sel=document.getElementById("c-spot");if(!sel)return;const spot=spotById(sel.value),pos=S.catchPos||S.pos,box=document.getElementById("c-exif");
   if(!spot||!pos||distKm(spot,pos)>3)return;const z=zoneAt(spot,pos);
   if(z){box.hidden=false;const t=box.dataset.base||box.textContent;box.dataset.base=t;box.textContent=(t?t+" · ":"")+"Zone : "+z.label+(z.num?" (n° "+z.num+")":"")}
@@ -1085,7 +1133,13 @@ function catchForm(spotId){
     <label class="f">Date et heure de la prise<input type="datetime-local" id="c-when" value="${localISO(new Date())}" max="${localISO(new Date())}"></label>
     <label class="f">Spot<select id="c-spot">${spots.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.nom)}${S.pos?" ("+distKm(S.pos,s).toFixed(1)+" km)":""}</option>`).join("")}</select></label>
     ${spots.length?"":`<div class="alert warn">Crée d'abord un spot depuis la carte.</div>`}
-    <label class="row small" style="gap:8px;font-weight:700"><input type="checkbox" id="c-gps" ${S.pos?"checked":""} style="width:auto;min-height:0"><span id="c-gps-l">Enregistrer l'endroit exact de la prise (${S.pos?"position du téléphone":"en attente du GPS ou de la photo"})</span></label>
+    <fieldset class="panel stack" style="margin:0;padding:12px"><legend class="lbl">Endroit exact de la prise</legend>
+      <p class="small muted" style="margin:0">Fais glisser l'épingle, ou touche la carte, à l'endroit où le poisson a été pris.</p>
+      <div id="c-map" style="height:min(42vh,300px);border-radius:10px;border:1px solid var(--line);position:relative;z-index:0"></div>
+      <p class="small" id="c-posinfo" style="margin:0"></p>
+      <div class="row" style="gap:8px"><button class="btn sm" type="button" data-act="cpos-gps">Ma position</button><button class="btn sm" type="button" data-act="cpos-spot">Sur le spot</button><button class="btn sm" type="button" data-act="cpos-none">Ne pas enregistrer l'endroit</button></div>
+    </fieldset>
+    <div class="panel" id="c-wx" style="padding:12px"><div class="lbl">Météo au moment et à l'endroit de la prise</div><p class="small muted" style="margin:6px 0 0">Ajoute la photo ou choisis l'heure et l'endroit.</p></div>
     <label class="f">Espèce<select id="c-esp">${SPECIES.map(s=>`<option value="${s.id}">${s.nom}</option>`).join("")}<option value="autre">Autre</option></select></label>
     <div class="grid2"><label class="f">Taille (cm)<input id="c-taille" type="number" inputmode="decimal" min="0" step="0.5" required></label><label class="f">Poids (kg)<input id="c-poids" type="number" inputmode="decimal" min="0" step="0.05" placeholder="Optionnel"></label></div>
     <label class="f">Leurre utilisé<input id="c-leurre" list="c-lures" placeholder="ex. Shad 10 cm chartreuse"><datalist id="c-lures">${lures.map(g=>`<option value="${esc(g.nom)}">`).join("")}</datalist></label>
@@ -1441,13 +1495,13 @@ function zoneForm(a){
     <button class="btn primary wide" type="submit">Enregistrer la zone</button>
   </form></div>`;
 }
-function closeSheet(){if(zoneMap){zoneMap.remove();zoneMap=null}S.zoneAdd=false;S.sheet=null;S.sheetHTML=null;document.getElementById("sheet").innerHTML="";document.body.style.overflow="";if(tempMarker){tempMarker.remove();tempMarker=null}}
+function closeSheet(){if(zoneMap){zoneMap.remove();zoneMap=null}if(catchMap){catchMap.remove();catchMap=null;catchMarker=null}S.zoneAdd=false;S.sheet=null;S.sheetHTML=null;document.getElementById("sheet").innerHTML="";document.body.style.overflow="";if(tempMarker){tempMarker.remove();tempMarker=null}}
 function renderSheet(force){
   const el=document.getElementById("sheet");if(!S.sheet){el.innerHTML="";return}
   const {type,arg}=S.sheet;
   if(type==="zoneForm"){if(!force)return;el.innerHTML=zoneForm(arg);return}
   if(type==="catchForm"||type==="spotForm"||type==="report"){if(!force)return;
-    el.innerHTML=type==="catchForm"?catchForm(arg&&arg.id):type==="spotForm"?spotForm(arg.lat,arg.lng,arg.edit?spotById(arg.edit):null):reportForm(arg.id);relache=true;return}
+    el.innerHTML=type==="catchForm"?catchForm(arg&&arg.id):type==="spotForm"?spotForm(arg.lat,arg.lng,arg.edit?spotById(arg.edit):null):reportForm(arg.id);relache=true;if(type==="catchForm"){S.catchWx=null;setTimeout(initCatchMap,0)}return}
   const ae=document.activeElement;if(ae&&el.contains(ae)&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName))return;
   let key=type+"|"+(arg&&arg.id)+"|"+S.spotTab+"|"+S.zoneAdd;
   if(type==="spot"&&S.spotTab==="zones"){const sp=spotById(arg.id);if(sp){const A=getAutoZones(sp);key+="|"+(A.loading?"L":A.error?"E":A.zones.length)+"|"+(conditions(sp,new Date())?1:0)+"|"+S.zones.length}}
@@ -1510,6 +1564,9 @@ document.addEventListener("click",async e=>{
         if(r.ok){st.textContent=`Produit lu sur ${r.site}${r.prix!=null?" ("+Number(r.prix).toFixed(2).replace(".",",")+" €)":""} : vérifie le type et touche « Ajouter au matos ».`}
         else{st.className="alert warn small";st.textContent=`${r.site} ne permet pas la lecture automatique : j'ai repris ${r.nom?"le nom du produit depuis le lien":"le lien"}. Vérifie le nom, choisis le type et ajoute une photo si tu veux.`}
       }catch(err){st.className="alert warn small";st.textContent=err.message||"Lecture impossible"}break}
+    case "cpos-gps":if(S.pos)setCatchPos({...S.pos,src:"gps"},true);else{locate(false);toast("Recherche de ta position… réessaie dans un instant")}break;
+    case "cpos-spot":{const sp=spotById(document.getElementById("c-spot").value);if(sp)setCatchPos({lat:sp.lat,lng:sp.lng,src:"spot"},true);break}
+    case "cpos-none":setCatchPos(null);break;
     case "edit-spot":{const sp=spotById(d.spot);openSheet("spotForm",{lat:sp.lat,lng:sp.lng,edit:sp.id});break}
     case "zone-add":S.zoneAdd=true;renderSheet(true);toast("Touche la carte à l'endroit de la zone");break;
     case "zone-cancel":S.zoneAdd=false;renderSheet(true);break;
@@ -1532,12 +1589,13 @@ document.addEventListener("change",async e=>{
   if(e.target.id==="c-photo"&&e.target.files[0]){const file=e.target.files[0];const ex=await readExif(file);const b=await compress(file);S.catchBlob=b;const p=document.getElementById("c-prev");p.src=URL.createObjectURL(b);p.hidden=false;
     const info=[],box=document.getElementById("c-exif");
     if(ex&&ex.date&&Date.now()-ex.date<60*dayMs&&ex.date<=new Date()){document.getElementById("c-when").value=localISO(ex.date);info.push("Heure de la photo : "+dateFr(ex.date))}
-    if(ex&&ex.lat!=null){S.catchPos={lat:ex.lat,lng:ex.lng,src:"photo"};const near=S.spots.filter(sp=>sp.statut!=="ban").map(sp=>({sp,d:distKm(sp,S.catchPos)})).sort((a,b)=>a.d-b.d)[0];
-      if(near&&near.d<3){document.getElementById("c-spot").value=near.sp.id;info.push(`Position de la photo : à ${Math.round(near.d*1000)} m de « ${near.sp.nom} »`)}else info.push("Position lue dans la photo (aucun spot du groupe à moins de 3 km)");
-      document.getElementById("c-gps").checked=true;document.getElementById("c-gps-l").textContent="Enregistrer l'endroit exact de la prise (position de la photo)";}
-    updateCatchZone();
+    if(ex&&ex.lat!=null){setCatchPos({lat:ex.lat,lng:ex.lng,src:"photo"},true);info.push("Position lue dans la photo : vérifie l'épingle sur la carte")}
+    else info.push("Pas de position dans la photo : place l'épingle à l'endroit de la prise");
+    if(!(ex&&ex.date))info.push("Pas d'heure dans la photo : vérifie la date et l'heure");
+    refreshCatchWx();
     if(info.length){box.textContent=info.join(" · ");box.hidden=false}}
-  if(e.target.id==="c-spot")updateCatchZone();
+  if(e.target.id==="c-spot"){if(!S.catchPos||S.catchPos.src==="spot"||S.catchPos.src==="gps"&&S.pos&&spotById(e.target.value)&&distKm(S.pos,spotById(e.target.value))>3){const sp=spotById(e.target.value);if(sp)setCatchPos({lat:sp.lat,lng:sp.lng,src:"spot"},true)}else{updateCatchPosInfo();refreshCatchWx()}}
+  if(e.target.id==="c-when")refreshCatchWx();
   if(e.target.id==="k-import"&&e.target.files[0]){const file=e.target.files[0],st=document.getElementById("k-status");const say=t=>{st.hidden=false;st.className="alert info small";st.textContent=t};
     try{say("Préparation de la lecture…");const r=await readLicenceFile(file,say);S.licImport=r.image;
       if(r.image){const pv=document.getElementById("k-prev");pv.src=URL.createObjectURL(r.image);pv.hidden=false}
@@ -1572,14 +1630,16 @@ document.addEventListener("submit",async e=>{
     if(f.id==="onboard-form"){const {error}=await sb.from("peche_profiles").insert({id:S.user.id,pseudo:v("o-pseudo"),region:v("o-region")||null});if(error)throw error;await startApp()}
     if(f.id==="catch-form"){
       const spot=spotById(v("c-spot")),now=new Date();let when=v("c-when")?new Date(v("c-when")):now;if(!(when<=now))when=now;
-      let w=null;
-      if(now-when<20*36e5){const c=conditions(spot,when);if(c)w=c.w}else{try{w=await histWeather(spot,when)}catch(e){}}
-      const st=sunTimes(when,spot.lat,spot.lng),mo=moon(when);
+      const place=S.catchPos||spot,key=place.lat.toFixed(3)+","+place.lng.toFixed(3)+"|"+when.toISOString().slice(0,13);
+      let w=S.catchWx&&S.catchWx.key===key?S.catchWx.w:null;
+      if(!w){try{w=await histWeather(place,when)}catch(e){if(now-when<20*36e5){const c=conditions(spot,when);if(c)w=c.w}}}
+      const st=sunTimes(when,place.lat,place.lng),mo=moon(when);
       const row={owner:S.user.id,spot_id:spot.id,espece:v("c-esp"),taille:+v("c-taille")||null,poids:+v("c-poids")||null,leurre:v("c-leurre")||null,technique:v("c-tech"),relache,caught_at:when.toISOString(),
-        meteo:Object.assign(w?{temp:w.temp,press:w.press,trend:w.trend,wind:w.wind,cloud:w.cloud,water:w.water,rain:w.rainmm}:{},{moon:mo.name,illum:Math.round(mo.illum*100),mom:momentOf(when,st),hour:when.getHours()+when.getMinutes()/60})};
-      const g=document.getElementById("c-gps"),pos=S.catchPos||S.pos;
-      if(g&&g.checked&&pos&&distKm(pos,spot)<5){row.lat=+pos.lat.toFixed(6);row.lng=+pos.lng.toFixed(6);row.meteo.pos_src=pos.src||"gps";const z=zoneAt(spot,pos);if(z)row.meteo.zone=z.label+(z.num?" (n° "+z.num+")":"")}
-      S.catchPos=null;
+        meteo:Object.assign(w?{temp:w.temp,press:w.press,trend:w.trend,wind:w.wind,dir:w.dir,cloud:w.cloud,water:w.water,rain:w.rainmm}:{},{moon:mo.name,illum:Math.round(mo.illum*100),mom:momentOf(when,st),hour:when.getHours()+when.getMinutes()/60})};
+      const pos=S.catchPos;
+      if(pos&&distKm(pos,spot)<10){row.lat=pos.lat;row.lng=pos.lng;row.meteo.pos_src=pos.src||"gps";const z=distKm(pos,spot)<3?zoneAt(spot,pos):null;if(z)row.meteo.zone=z.label+(z.num?" (n° "+z.num+")":"")}
+      else if(pos)toast("Endroit trop loin du spot choisi : seul le spot est enregistré");
+      S.catchPos=null;S.catchWx=null;
       const blob=S.catchBlob;S.catchBlob=null;
       try{
         if(!navigator.onLine)throw new TypeError("offline");
