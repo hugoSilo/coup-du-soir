@@ -604,7 +604,7 @@ const lureColor=c=>c.mom==="nuit"||c.mom==="crep"?"foncé (noir, violet) ou trè
 const windDir=d=>["N","NE","E","SE","S","SO","O","NO"][Math.round(d/45)%8];
 
 /* ================= État ================= */
-const S={zl:{auto:true,mine:true},zones:[],spotPhotos:[],zoneAdd:false,user:null,me:null,profiles:{},spots:[],catches:[],messages:[],depths:[],gear:{},licence:null,tab:"carte",
+const S={convs:[],members:{},conv:null,chatMode:null,zl:{auto:true,mine:true},zones:[],spotPhotos:[],zoneAdd:false,user:null,me:null,profiles:{},spots:[],catches:[],messages:[],depths:[],gear:{},licence:null,tab:"carte",
   catchFilter:"tous",viewProfile:null,addMode:false,layers:{base:"sat",routes:true,float:false},pos:null,sheet:null,pending:0,recovery:false};
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const hhmm=d=>new Date(d).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
@@ -709,12 +709,14 @@ addEventListener("online",()=>{updateNet();syncQueue()});addEventListener("offli
 
 /* ================= Données ================= */
 async function loadAll(){
-  await Promise.all([loadProfiles(),loadSpots(),loadCatches(),loadMessages(),loadDepths(),loadGear(S.user.id),loadLicence(),loadZones(),loadSpotPhotos(),loadRegles()]);
+  await Promise.all([loadProfiles(),loadSpots(),loadCatches(),loadMessages(),loadDepths(),loadGear(S.user.id),loadLicence(),loadZones(),loadSpotPhotos(),loadRegles(),loadConvs()]);
 }
 async function loadProfiles(){const {data}=await sb.from("peche_profiles").select("*");S.profiles=Object.fromEntries((data||[]).map(p=>[p.id,p]));S.me=S.profiles[S.user.id]||null;scheduleRender()}
 async function loadSpots(){const {data}=await sb.from("peche_spots").select("*").order("created_at");if(data){S.spots=data;drawSpots()}scheduleRender()}
 async function loadCatches(){const {data}=await sb.from("peche_catches").select("*").order("caught_at",{ascending:false}).limit(400);if(data)S.catches=data;scheduleRender()}
-async function loadMessages(){const {data}=await sb.from("peche_messages").select("*").order("created_at",{ascending:false}).limit(200);if(data)S.messages=data.reverse();scheduleRender()}
+async function loadMessages(){const {data}=await sb.from("peche_messages").select("*").order("created_at",{ascending:false}).limit(600);if(data)S.messages=data.reverse();scheduleRender()}
+async function loadConvs(){const [c,m]=await Promise.all([sb.from("peche_conversations").select("*"),sb.from("peche_conv_members").select("*")]);
+  if(c.data)S.convs=c.data;if(m.data){S.members={};m.data.forEach(r=>(S.members[r.conv_id]=S.members[r.conv_id]||[]).push(r))}scheduleRender()}
 async function loadDepths(){const {data}=await sb.from("peche_depths").select("*").order("created_at");if(data)S.depths=data;scheduleRender()}
 async function loadGear(u){const {data}=await sb.from("peche_gear").select("*").eq("owner",u).order("created_at");if(data)S.gear[u]=data;scheduleRender()}
 async function loadZones(){const {data}=await sb.from("peche_zones").select("*").order("created_at");if(data)S.zones=data;scheduleRender()}
@@ -746,6 +748,7 @@ function subscribe(){
   if(channel)sb.removeChannel(channel);
   channel=sb.channel("peche")
     .on("postgres_changes",{event:"*",schema:"public",table:"peche_messages"},()=>loadMessages())
+    .on("postgres_changes",{event:"*",schema:"public",table:"peche_conv_members"},()=>loadConvs())
     .on("postgres_changes",{event:"*",schema:"public",table:"peche_catches"},()=>loadCatches())
     .subscribe();
 }
@@ -828,9 +831,12 @@ function render(){
   const busy=ae&&v.contains(ae)&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName);
   if(!busy)v.innerHTML=({carte:viewCarte,prises:viewPrises,chat:viewChat,licence:viewLicence,profils:viewProfils})[S.tab]();
   const comp=document.getElementById("composer");
-  if(S.tab!=="chat")comp.innerHTML="";
+  const inConv=S.tab==="chat"&&S.conv&&!S.chatMode;
+  {const tb=document.querySelector('nav [data-tab="chat"]');if(tb){const n=totalUnread();let bd=tb.querySelector(".nb");if(n&&!bd){bd=document.createElement("span");bd.className="nb";tb.style.position="relative";tb.appendChild(bd)}if(bd){bd.hidden=!n;bd.textContent=n>99?"99+":n}}}
+  if(inConv&&document.visibilityState==="visible"&&unread(S.conv))markRead(S.conv);
+  if(!inConv)comp.innerHTML="";
   else if(!document.getElementById("msg-in"))comp.innerHTML=`<div class="composer"><div class="in"><input id="msg-in" placeholder="Écris un message" aria-label="Message" autocomplete="off" enterkeyhint="send"><button class="btn primary" data-act="send">Envoyer</button></div></div>`;
-  if(S.tab==="chat"&&S.messages.length!==render.lastN){render.lastN=S.messages.length;requestAnimationFrame(()=>scrollTo(0,document.body.scrollHeight))}
+  if(inConv&&convMsgs(S.conv).length!==render.lastN){render.lastN=convMsgs(S.conv).length;requestAnimationFrame(()=>scrollTo(0,document.body.scrollHeight))}
   renderSheet();updateNet();
 }
 
@@ -1211,12 +1217,61 @@ function viewPrises(){
 }
 
 /* ---- Discussion ---- */
+/* ---- Discussion : chat général, messages privés, groupes ---- */
+const GENERAL="general";
+const convMsgs=id=>S.messages.filter(m=>id===GENERAL?!m.conv_id:m.conv_id===id);
+function lastRead(id){if(id===GENERAL){try{return +localStorage.getItem("lr:"+S.user.id)||0}catch(e){return 0}}const me=(S.members[id]||[]).find(r=>r.user_id===S.user.id);return me?new Date(me.last_read_at).getTime():0}
+function unread(id){const lr=lastRead(id);return convMsgs(id).filter(m=>m.owner!==S.user.id&&new Date(m.created_at).getTime()>lr).length}
+function totalUnread(){return [GENERAL,...S.convs.map(c=>c.id)].reduce((t,id)=>t+unread(id),0)}
+function convTitle(c){if(c===GENERAL)return "Chat général";if(c.kind==="dm"){const o=(S.members[c.id]||[]).find(r=>r.user_id!==S.user.id);return o?pseudo(o.user_id):"Conversation privée"}return c.nom||"Groupe"}
+function convOther(c){return c.kind==="dm"?((S.members[c.id]||[]).find(r=>r.user_id!==S.user.id)||{}).user_id:null}
+async function markRead(id){
+  if(id===GENERAL){try{localStorage.setItem("lr:"+S.user.id,String(Date.now()))}catch(e){}return}
+  const me=(S.members[id]||[]).find(r=>r.user_id===S.user.id);if(me)me.last_read_at=new Date().toISOString();
+  await sb.from("peche_conv_members").update({last_read_at:new Date().toISOString()}).eq("conv_id",id).eq("user_id",S.user.id);
+}
+async function openConv(id){S.conv=id;S.chatMode=null;S.showMembers=false;render.lastN=-1;markRead(id);S.tab="chat";render()}
+async function openDm(uid){const {data,error}=await sb.rpc("peche_open_dm",{other:uid});if(error)throw error;await loadConvs();openConv(data)}
+function msgHTML(m){
+  const c=m.catch_id&&S.catches.find(x=>x.id===m.catch_id),sp=m.spot_id&&spotById(m.spot_id);
+  return `<div class="msg${m.owner===S.user.id?" me":""}"><div class="who">${esc(pseudo(m.owner))} · ${dateFr(m.created_at)}</div>${m.text?esc(m.text):""}
+    ${c?`<div style="margin-top:6px">${c.photo_path?img(c.photo_path,"ph","").replace('class="ph','style="border-radius:10px;width:100%" class="ph'):""}<div><b>${esc(SP[c.espece]?SP[c.espece].nom:c.espece)} ${esc(c.taille||"")} cm</b> · ${esc(c.leurre||"")}</div></div>`:""}
+    ${sp?`<button class="btn sm" style="margin-top:6px" data-spot="${sp.id}">${isRoute(sp)?"🛶":"📍"} ${esc(sp.nom)}</button>`:""}</div>`;
+}
 function viewChat(){
-  return `<h2>Le groupe</h2><div class="msgs">${S.messages.length?S.messages.map(m=>{
-    const c=m.catch_id&&S.catches.find(x=>x.id===m.catch_id),sp=m.spot_id&&spotById(m.spot_id);
-    return `<div class="msg${m.owner===S.user.id?" me":""}"><div class="who">${esc(pseudo(m.owner))} · ${dateFr(m.created_at)}</div>${m.text?esc(m.text):""}
-      ${c?`<div style="margin-top:6px">${c.photo_path?img(c.photo_path,"ph","").replace('class="ph','style="border-radius:10px;width:100%" class="ph'):""}<div><b>${esc(SP[c.espece]?SP[c.espece].nom:c.espece)} ${esc(c.taille||"")} cm</b> · ${esc(c.leurre||"")}</div></div>`:""}
-      ${sp?`<button class="btn sm" style="margin-top:6px" data-spot="${sp.id}">📍 ${esc(sp.nom)}</button>`:""}</div>`}).join(""):`<div class="empty"><b>Aucun message</b>Lance la discussion, ou partage une prise depuis le carnet.</div>`}</div>`;
+  const others=Object.keys(S.profiles).filter(u=>u!==S.user.id);
+  if(S.chatMode==="dm")return `<div class="row" style="margin-top:14px"><button class="btn sm" data-act="chat-back">← Discussions</button></div><h2>Nouveau message privé</h2>
+    <div class="stack">${others.length?others.map(u=>`<button class="panel row" style="width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer" data-act="dm" data-uid="${u}">${avatar(u)}<span style="flex:1;min-width:0"><b>${esc(pseudo(u))}</b><br><span class="small muted">${esc((S.profiles[u]||{}).region||"")}</span></span></button>`).join(""):`<div class="empty"><b>Personne d'autre pour l'instant</b>Invite tes amis depuis l'onglet Profils.</div>`}</div>`;
+  if(S.chatMode==="group"){const conv=S.editGroup&&S.convs.find(c=>c.id===S.editGroup),inG=conv?(S.members[conv.id]||[]).map(r=>r.user_id):[];
+    const cand=others.filter(u=>!inG.includes(u));
+    return `<div class="row" style="margin-top:14px"><button class="btn sm" data-act="${conv?"chat-open":"chat-back"}" ${conv?`data-conv="${conv.id}"`:""}>← ${conv?esc(conv.nom):"Discussions"}</button></div><h2>${conv?"Ajouter des membres":"Créer un groupe privé"}</h2>
+    <form class="panel stack" id="group-form" ${conv?`data-conv="${conv.id}"`:""}>
+      ${conv?"":`<label class="f">Nom du groupe<input id="gr-nom" required maxlength="60" placeholder="ex. Team float tube Vilaine"></label>`}
+      <div class="lbl">${conv?"Pêcheurs à ajouter":"Membres"}</div>
+      <div class="stack" style="gap:6px">${cand.length?cand.map(u=>`<label class="row" style="gap:10px;cursor:pointer"><input type="checkbox" name="gr-m" value="${u}" style="width:auto;min-height:0">${avatar(u)}<b>${esc(pseudo(u))}</b></label>`).join(""):`<span class="muted small">Personne d'autre à ajouter pour l'instant.</span>`}</div>
+      <p class="small muted" style="margin:0">Seuls les membres du groupe voient ses messages.</p>
+      <button class="btn primary" type="submit">${conv?"Ajouter":"Créer le groupe"}</button></form>`}
+  if(S.conv){
+    const c=S.conv===GENERAL?GENERAL:S.convs.find(x=>x.id===S.conv);if(!c){S.conv=null;return viewChat()}
+    const mem=c===GENERAL?[]:(S.members[c.id]||[]),msgs=convMsgs(S.conv);
+    const sub=c===GENERAL?`Tous les pêcheurs de l'app (${Object.keys(S.profiles).length})`:c.kind==="dm"?"Message privé":`Groupe privé · ${mem.length} membre${mem.length>1?"s":""}`;
+    return `<div class="row" style="margin-top:14px;justify-content:space-between"><button class="btn sm" data-act="chat-back">← Discussions</button>
+      ${c!==GENERAL&&c.kind==="groupe"?`<button class="btn sm" data-act="chat-members">${S.showMembers?"Masquer les membres":"Membres"}</button>`:""}${c!==GENERAL&&c.kind==="dm"?`<button class="btn sm" data-act="open-profile" data-uid="${convOther(c)}">Voir le profil</button>`:""}</div>
+      <h2 style="margin-bottom:2px">${c!==GENERAL&&c.kind==="dm"?"✉️ ":c===GENERAL?"💬 ":"👥 "}${esc(convTitle(c))}</h2><p class="small muted" style="margin:0 0 10px">${sub}</p>
+      ${S.showMembers&&c!==GENERAL?`<div class="panel stack" style="margin-bottom:12px">${mem.map(r=>`<div class="row">${avatar(r.user_id)}<b style="flex:1">${esc(pseudo(r.user_id))}${r.user_id===c.owner?' <span class="chip ghost">créateur</span>':""}</b>${c.owner===S.user.id&&r.user_id!==S.user.id?`<button class="btn sm" data-act="grp-remove" data-uid="${r.user_id}">Retirer</button>`:""}</div>`).join("")}
+        <div class="grid2"><button class="btn" data-act="grp-add">+ Ajouter des membres</button><button class="btn danger" data-act="grp-leave">Quitter le groupe</button></div></div>`:""}
+      <div class="msgs">${msgs.length?msgs.map(msgHTML).join(""):`<div class="empty"><b>Aucun message</b>${c===GENERAL?"Lance la discussion, ou partage une prise depuis le carnet.":"Écris le premier message."}</div>`}</div>`;
+  }
+  const items=[GENERAL,...S.convs].map(c=>{const id=c===GENERAL?GENERAL:c.id,ms=convMsgs(id),last=ms[ms.length-1];return {c,id,last,t:last?new Date(last.created_at).getTime():(c===GENERAL?0:new Date(c.created_at).getTime()),n:unread(id)}})
+    .sort((a,b)=>a.id===GENERAL?-1:b.id===GENERAL?1:b.t-a.t);
+  return `<h2>Discussion</h2>
+    <div class="grid2" style="margin-bottom:12px"><button class="btn" data-act="chat-new-dm">✉️ Message privé</button><button class="btn" data-act="chat-new-group">👥 Créer un groupe</button></div>
+    <div class="stack">${items.map(o=>{const c=o.c,ic=c===GENERAL?"💬":c.kind==="dm"?"":"👥",dm=c!==GENERAL&&c.kind==="dm";
+      return `<button class="panel row" style="width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;gap:12px" data-act="chat-open" data-conv="${o.id}">
+        ${dm?avatar(convOther(c)):`<div class="avatar" style="background:${c===GENERAL?"var(--accent)":"var(--water-deep)"};font-size:1.4rem">${ic}</div>`}
+        <span style="flex:1;min-width:0"><b>${esc(convTitle(c))}</b>${c!==GENERAL&&c.kind==="groupe"?` <span class="small muted">· ${(S.members[c.id]||[]).length} membres</span>`:""}<br>
+        <span class="small muted" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.last?esc(pseudo(o.last.owner)+" : "+(o.last.text||(o.last.catch_id?"a partagé une prise":"a partagé un spot"))):c===GENERAL?"Tous les pêcheurs de l'app":"Pas encore de message"}</span></span>
+        <span style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${o.last?`<span class="small muted num">${hhmm(o.last.created_at)}</span>`:""}${o.n?`<span class="chip ok num">${o.n}</span>`:""}</span></button>`}).join("")}</div>`;
 }
 
 /* ---- Carte de pêche ---- */
@@ -1464,7 +1519,8 @@ function profileView(u){
   if(!S.gear[u]&&!profileView.loading[u]){profileView.loading[u]=1;loadGear(u)}
   const p=S.profiles[u]||{},list=S.catches.filter(x=>x.owner===u),gear=S.gear[u]||[];
   return `<div class="row" style="margin-top:14px"><button class="btn sm" data-act="back-profiles">← Pêcheurs</button></div>
-  <div class="row" style="margin-top:14px">${avatar(u,true)}<div style="min-width:0"><h2 style="margin:0">${esc(p.pseudo||"Pêcheur")}</h2><div class="muted">${esc(p.region||"")}</div></div></div>
+  <div class="row" style="margin-top:14px">${avatar(u,true)}<div style="min-width:0;flex:1"><h2 style="margin:0">${esc(p.pseudo||"Pêcheur")}</h2><div class="muted">${esc(p.region||"")}</div></div></div>
+  <button class="btn primary wide" style="margin-top:12px" data-act="dm" data-uid="${u}">✉️ Envoyer un message privé</button>
   ${p.bio?`<p>${esc(p.bio)}</p>`:""}
   <div class="kv" style="margin-top:12px"><div><span class="small muted">Techniques</span><b class="t">${esc(p.tech||"—")}</b></div><div><span class="small muted">Espèces favorites</span><b class="t">${esc(p.esp||"—")}</b></div></div>
   ${list.length?`<div class="panel" style="margin-top:12px">${stats(list)}</div>`:""}
@@ -1674,7 +1730,7 @@ document.addEventListener("click",async e=>{
   if(!t||t.disabled)return;
   const d=t.dataset;
   if(d.auth){S.authMode=d.auth;render();return}
-  if(d.tab){S.tab=d.tab;S.viewProfile=null;closeSheet();render();scrollTo(0,0);return}
+  if(d.tab){if(d.tab==="chat"&&S.tab==="chat"){S.conv=null;S.chatMode=null}S.tab=d.tab;S.viewProfile=null;closeSheet();render();scrollTo(0,0);return}
   if(d.base){setBase(d.base);render();return}
   if(d.layer){S.layers[d.layer]=!S.layers[d.layer];if(d.layer==="routes")setBase(S.layers.base);drawSpots();render();return}
   if(d.filter){S.catchFilter=d.filter;render();return}
@@ -1698,9 +1754,9 @@ document.addEventListener("click",async e=>{
       const {error}=await sb.from("peche_depths").insert({spot_id:d.spot,m:+m,note:n||null,owner:S.user.id});if(error)throw error;await loadDepths();renderSheet();toast("Relevé ajouté");break}
     case "del-depth":await sb.from("peche_depths").delete().eq("id",d.id);await loadDepths();renderSheet();break;
     case "del-catch":{const x=S.catches.find(c=>c.id===d.id);const {error}=await sb.from("peche_catches").delete().eq("id",d.id);if(error)throw error;if(x&&x.photo_path)sb.storage.from("peche-photos").remove([x.photo_path]);await loadCatches();toast("Prise supprimée");break}
-    case "share-catch":{const {error}=await sb.from("peche_messages").insert({owner:S.user.id,text:"Regardez ma prise !",catch_id:d.id});if(error)throw error;toast("Partagée dans la discussion");break}
+    case "share-catch":{const {error}=await sb.from("peche_messages").insert({owner:S.user.id,text:"Regardez ma prise !",catch_id:d.id});if(error)throw error;toast("Partagée dans le chat général");break}
     case "send":sendMsg();break;
-    case "open-profile":closeSheet();S.tab="profils";S.viewProfile=d.uid;render();scrollTo(0,0);break;
+    case "open-profile":closeSheet();S.conv=null;S.chatMode=null;S.tab="profils";S.viewProfile=d.uid;render();scrollTo(0,0);break;
     case "back-profiles":S.viewProfile=null;render();break;
     case "del-gear":{const g=(S.gear[S.user.id]||[]).find(x=>x.id===d.id);await sb.from("peche_gear").delete().eq("id",d.id);if(g&&g.photo_path)sb.storage.from("peche-photos").remove([g.photo_path]);await loadGear(S.user.id);toast("Matériel supprimé");break}
     case "del-spot":{const {error}=await sb.from("peche_spots").delete().eq("id",d.spot);if(error)throw error;closeSheet();await loadSpots();toast("Spot supprimé");break}
@@ -1730,8 +1786,18 @@ document.addEventListener("click",async e=>{
       let d=inp.value?new Date(inp.value):new Date(Date.now()+dayMs);d.setHours(12,0,0,0);const st=sunTimes(d,tr[0][0],tr[0][1]);inp.value=localISO(new Date(st.rise.getTime()-30*6e4));updateRouteSun();break}
     case "route-share":{const sp=spotById(d.spot),dt=sp.sortie_date?new Date(sp.sortie_date):null,st=dt?sunTimes(dt,sp.lat,sp.lng):null;
       const txt=`🛶 Sortie float tube « ${sp.nom} »${dt?" le "+dateFr(dt):""} : ${fmtKm(routeLen(sp.trace))}, environ ${fmtDur(routeLen(sp.trace)/1000/FT_SPEED)} de navigation${st?", lever du soleil "+hhmm(st.rise):""}. Qui vient ?`;
-      const {error}=await sb.from("peche_messages").insert({owner:S.user.id,text:txt,spot_id:sp.id});if(error)throw error;toast("Sortie proposée dans la discussion");break}
+      const {error}=await sb.from("peche_messages").insert({owner:S.user.id,text:txt,spot_id:sp.id});if(error)throw error;toast("Sortie proposée dans le chat général");break}
     case "route-done":{const sp=spotById(d.spot);const {error}=await sb.from("peche_spots").update({sortie_faite:true,sortie_date:sp.sortie_date||new Date().toISOString()}).eq("id",sp.id);if(error)throw error;await loadSpots();renderSheet(true);toast("Sortie marquée comme faite");break}
+    case "chat-back":S.conv=null;S.chatMode=null;S.editGroup=null;render();scrollTo(0,0);break;
+    case "chat-open":openConv(d.conv);break;
+    case "chat-new-dm":S.chatMode="dm";render();scrollTo(0,0);break;
+    case "chat-new-group":S.chatMode="group";S.editGroup=null;render();scrollTo(0,0);break;
+    case "chat-members":S.showMembers=!S.showMembers;render();break;
+    case "dm":await openDm(d.uid);break;
+    case "grp-add":S.chatMode="group";S.editGroup=S.conv;render();scrollTo(0,0);break;
+    case "grp-leave":{const c=S.conv;if(!S.confirmLeave||S.confirmLeave!==c){S.confirmLeave=c;toast("Touche encore « Quitter le groupe » pour confirmer");setTimeout(()=>{if(S.confirmLeave===c)S.confirmLeave=null},4000);break}
+      S.confirmLeave=null;const {error}=await sb.from("peche_conv_members").delete().eq("conv_id",c).eq("user_id",S.user.id);if(error)throw error;S.conv=null;S.showMembers=false;await loadConvs();await loadMessages();toast("Tu as quitté le groupe");break}
+    case "grp-remove":{const {error}=await sb.from("peche_conv_members").delete().eq("conv_id",S.conv).eq("user_id",d.uid);if(error)throw error;await loadConvs();toast("Membre retiré");break}
     case "edit-spot":{const sp=spotById(d.spot);if(isRoute(sp))openSheet("routeForm",{edit:sp.id});else openSheet("spotForm",{lat:sp.lat,lng:sp.lng,edit:sp.id});break}
     case "zone-add":S.zoneAdd=true;renderSheet(true);toast("Touche la carte à l'endroit de la zone");break;
     case "zone-cancel":S.zoneAdd=false;renderSheet(true);break;
@@ -1747,8 +1813,8 @@ document.addEventListener("keydown",e=>{
   if(e.key==="Enter"&&e.target.id==="msg-in"){e.preventDefault();sendMsg()}
   if(e.key==="Escape"&&S.sheet)closeSheet();
 });
-async function sendMsg(){const i=document.getElementById("msg-in");const v=i.value.trim();if(!v)return;i.value="";
-  const {error}=await sb.from("peche_messages").insert({owner:S.user.id,text:v});if(error){toast("Message non envoyé : réessaie");i.value=v}else loadMessages()}
+async function sendMsg(){const i=document.getElementById("msg-in");const v=i.value.trim();if(!v||!S.conv)return;i.value="";
+  const {error}=await sb.from("peche_messages").insert({owner:S.user.id,text:v,conv_id:S.conv===GENERAL?null:S.conv});if(error){toast("Message non envoyé : réessaie");i.value=v}else loadMessages()}
 
 document.addEventListener("change",async e=>{
   if(e.target.id==="c-photo"&&e.target.files[0]){const file=e.target.files[0];const ex=await readExif(file);const b=await compress(file);S.catchBlob=b;const p=document.getElementById("c-prev");p.src=URL.createObjectURL(b);p.hidden=false;
@@ -1848,6 +1914,9 @@ document.addEventListener("submit",async e=>{
       if(file){p.photo_path=await upload(await compress(file,400,.8),"peche-photos","avatar-");if(S.me.photo_path)sb.storage.from("peche-photos").remove([S.me.photo_path])}
       const {error}=await sb.from("peche_profiles").update(p).eq("id",S.user.id);if(error)throw error;await loadProfiles();toast("Profil enregistré");
     }
+    if(f.id==="group-form"){const ms=[...f.querySelectorAll('input[name="gr-m"]:checked')].map(x=>x.value);
+      if(f.dataset.conv){if(!ms.length)throw new Error("Choisis au moins un pêcheur");const {error}=await sb.rpc("peche_add_members",{c:f.dataset.conv,membres:ms});if(error)throw error;await loadConvs();S.editGroup=null;openConv(f.dataset.conv);toast("Membres ajoutés")}
+      else{const {data,error}=await sb.rpc("peche_create_group",{nom_groupe:v("gr-nom"),membres:ms});if(error)throw error;await loadConvs();openConv(data);toast("Groupe créé")}}
     if(f.id==="regle-form"){const {error}=await sb.from("peche_regles_eau").insert({nom_eau:v("r-nom").replace(/^(la|le|les|l')\s*/i,""),float:"ok",note:"Float tube autorisé (indiqué par le groupe), sauf écluses, chenal de navigation et zones interdites signalées",owner:S.user.id});if(error)throw new Error(error.code==="23505"?"Cette rivière est déjà dans la liste":error.message);await loadRegles();toast("Rivière ajoutée")}
     if(f.id==="gear-form"){
       const file=document.getElementById("g-photo").files[0],g={owner:S.user.id,type:v("g-type"),nom:v("g-nom"),det:v("g-det")||null,url:v("g-url")||null,photo_url:v("g-photourl")||null,marque:v("g-marque")||null,prix:v("g-prix")!==""?+v("g-prix"):null};
