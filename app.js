@@ -826,11 +826,12 @@ function render(){
   if(S.recovery){renderRecovery();return}
   if(!S.me){renderOnboarding();return}
   document.getElementById("tabs").hidden=false;
+  if(S.spots.length&&!render.alertsChecked&&typeof checkAlerts==="function"){render.alertsChecked=true;checkAlerts()}
   document.querySelectorAll("nav.tabs button").forEach(b=>b.setAttribute("aria-current",b.dataset.tab===S.tab?"page":"false"));
   document.getElementById("mapwrap").hidden=S.tab!=="carte";
   if(S.tab==="carte"){initMap();setTimeout(()=>map.invalidateSize(),0)}
   const busy=ae&&v.contains(ae)&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName);
-  if(!busy)v.innerHTML=({carte:viewCarte,prises:viewPrises,chat:viewChat,licence:viewLicence,profils:viewProfils})[S.tab]();
+  if(!busy)v.innerHTML=({carte:viewCarte,prises:viewPrises,chat:viewChat,licence:viewLicence,profils:viewProfils,meteo:()=>viewMeteo()})[S.tab]();
   const comp=document.getElementById("composer");
   {const av=document.getElementById("me-av");if(av){av.hidden=false;const h=avatar(S.user.id);if(av.dataset.h!==h){av.dataset.h=h;av.innerHTML=h}}}
   const inConv=S.tab==="chat"&&S.conv&&!S.chatMode;
