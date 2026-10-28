@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 90" role="img" aria-label="Coup du Soir">
+<defs>
+ <linearGradient id="wsky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3B2F4A"/><stop offset=".45" stop-color="#C8573A"/><stop offset="1" stop-color="#F2A54A"/></linearGradient>
+ <radialGradient id="wsun" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#FFF1C2"/><stop offset=".6" stop-color="#FBC266"/><stop offset="1" stop-color="#F08A3A"/></radialGradient>
+ <linearGradient id="wsea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#34525A"/><stop offset="1" stop-color="#14262C"/></linearGradient>
+ <clipPath id="wclip"><rect width="160" height="90" rx="10"/></clipPath>
+ <clipPath id="wskyc"><rect width="160" height="64"/></clipPath>
+</defs>
+<g clip-path="url(#wclip)">
+ <rect width="160" height="64" fill="url(#wsky)"/>
+ <circle cx="104" cy="64" r="19" fill="url(#wsun)" clip-path="url(#wskyc)"/>
+ <rect y="64" width="160" height="26" fill="url(#wsea)"/>
+ <g stroke="#F6B45A" stroke-linecap="round">
+  <path d="M86.9 66.5h34.2" stroke-width="1.6" opacity=".85"/>
+  <path d="M91.65 70h24.7" stroke-width="1.4" opacity=".65"/>
+  <path d="M95.45 73.5h17.1" stroke-width="1.2" opacity=".45"/>
+  <path d="M99.25 77h9.5" stroke-width="1" opacity=".3"/>
+ </g>
+ <g transform="translate(9 13) scale(.98) rotate(-7 71 23)">
+<defs>
+ <linearGradient id="wv" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#26332A"/><stop offset=".45" stop-color="#55654F"/><stop offset=".78" stop-color="#9AA08A"/><stop offset="1" stop-color="#D3CDB2"/></linearGradient>
+ <linearGradient id="wr" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="142" y2="0"><stop offset="0" stop-color="#B5332A" stop-opacity="0"/><stop offset=".5" stop-color="#B5332A" stop-opacity="0"/><stop offset=".72" stop-color="#B83A2A" stop-opacity=".55"/><stop offset=".9" stop-color="#C4402C" stop-opacity=".85"/><stop offset="1" stop-color="#C4402C" stop-opacity=".9"/></linearGradient>
+ <linearGradient id="wf" gradientUnits="userSpaceOnUse" x1="70" y1="0" x2="140" y2="0"><stop offset="0" stop-color="#3B4A3C"/><stop offset=".45" stop-color="#7A3A2C"/><stop offset="1" stop-color="#B9372A"/></linearGradient>
+ <pattern id="ws" width="6" height="5" patternUnits="userSpaceOnUse"><path d="M0 2.5a3 2.6 0 0 1 6 0M-3 5a3 2.6 0 0 1 6 0M3 5a3 2.6 0 0 1 6 0" fill="none" stroke="#141B16" stroke-width=".55" stroke-opacity=".55"/></pattern>
+ <clipPath id="wc"><path d="M3 23C6 18 14 15.4 26 14.4C46 12.8 70 12 88 12.6C98 13 106 15 113 17.4L113 28.6C106 31 98 32.6 88 33C70 33.8 46 33 28 31.6C16 30.6 7 28 3 25Z"/></clipPath>
+</defs>
+<g stroke="#121914" stroke-width=".7" stroke-linejoin="round">
+ <path d="M78 12.9C84 8 93 5.4 101 6.3C107.5 7.2 112 10.8 114.6 16.9L106 15C98 13.6 89 12.9 78 12.9Z" fill="url(#wf)"/><path d="M78 32.9C84 37.8 93 40.6 101 39.7C107.5 38.8 112 35.2 114.6 29.1L106 31C98 32.4 89 32.9 78 32.9Z" fill="url(#wf)"/><path d="M112 17.1C119 10.4 131 9.9 137.2 16.4C140 20 140 26 137.2 29.6C131 36.1 119 35.6 112 28.9Z" fill="url(#wf)"/>
+</g>
+<g fill="none" stroke="#141B16" stroke-width=".45" stroke-opacity=".5">
+ <path d="M86 12.2l3-4.6M92 11.8l3-5.3M98 12.2l3-5.4M104 13.2l2.5-5M109 14.6l2-4.2M86 33.6l3 4.6M92 34l3 5.3M98 33.6l3 5.4M104 32.6l2.5 5M109 31.2l2 4.2"/>
+ <path d="M116 16l9-4M117 19l13-4.5M118 23h18M117 27l13 4.5M116 30l9 4"/>
+</g>
+<path d="M3 23C6 18 14 15.4 26 14.4C46 12.8 70 12 88 12.6C98 13 106 15 113 17.4L113 28.6C106 31 98 32.6 88 33C70 33.8 46 33 28 31.6C16 30.6 7 28 3 25Z" fill="url(#wv)" stroke="#121914" stroke-width=".7"/>
+<g clip-path="url(#wc)">
+ <rect x="30" y="0" width="90" height="46" fill="url(#ws)"/>
+ <rect x="0" y="0" width="142" height="46" fill="url(#wr)"/>
+ <path d="M3 22C14 14 30 13.6 34 14L34 31C24 31 10 29 3 24Z" fill="#1A231C" opacity=".35"/>
+ <path d="M8 21.5C40 19.6 80 19.6 112 21.8" fill="none" stroke="#E9E4CC" stroke-width=".7" opacity=".35"/>
+</g>
+<path d="M27 27.4C31.5 32.8 38 35.9 44 36C39.5 31.6 34.5 29 27 27.4Z" fill="url(#wf)" stroke="#121914" stroke-width=".6" opacity=".95"/>
+<path d="M25 15.3C28 19.4 28 25.8 25 30.2" fill="none" stroke="#0F1511" stroke-width="1" stroke-linecap="round" opacity=".7"/>
+<path d="M3.4 23.4C6 23.6 9.5 24.2 12.8 24.8" fill="none" stroke="#0F1511" stroke-width="1" stroke-linecap="round"/>
+<circle cx="13" cy="20" r="2" fill="#E8DFAE"/><circle cx="13" cy="20" r="1.25" fill="#0E120F"/><circle cx="12.5" cy="19.5" r=".45" fill="#fff"/>
+</g>
+</g>
+</svg>

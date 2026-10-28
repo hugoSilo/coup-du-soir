@@ -846,7 +846,7 @@ function renderAuth(){
   document.getElementById("tabs").hidden=true;document.getElementById("mapwrap").hidden=true;
   const m=S.authMode||"login";
   document.getElementById("view").innerHTML=`<div class="auth stack">
-    <img class="logo-d" src="ara-dark.svg" alt="" width="200" height="65" style="align-self:center"><img class="logo-l" src="ara-light.svg" alt="" width="200" height="65" style="align-self:center">
+    <img src="logo-wide.svg" alt="" width="280" height="158" style="align-self:center;max-width:100%;height:auto;border-radius:18px;box-shadow:0 6px 18px rgba(0,0,0,.25)">
     <p class="muted" style="text-align:center;margin:0">Spots, conditions, prises et discussion entre amis pêcheurs.</p>
     <div class="seg" role="group"><button data-auth="login" aria-pressed="${m==="login"}">Se connecter</button><button data-auth="signup" aria-pressed="${m==="signup"}">Créer un compte</button></div>
     <form class="panel stack" id="auth-form">
