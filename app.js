@@ -634,7 +634,7 @@ async function flushUrls(){
   scheduleRender();
 }
 const img=(path,cls,alt,bucket)=>{const u=photo(path,bucket);return u?`<img class="${cls}" src="${esc(u)}" alt="${esc(alt||"")}" loading="lazy">`:`<div class="${cls} ph">${path?"…":esc(alt||"Pas de photo")}</div>`};
-const avatar=(u,lg)=>{const p=S.profiles[u],url=p&&photo(p.photo_path);return url?`<img class="avatar${lg?" lg":""}" src="${esc(url)}" alt="">`:`<div class="avatar${lg?" lg":""}">${esc((pseudo(u)[0]||"?").toUpperCase())}</div>`};
+const avatar=(u,lg,zoom)=>{const p=S.profiles[u],url=p&&photo(p.photo_path);return url?`<img class="avatar${lg?" lg":""}${zoom?" zoomable":""}" src="${esc(url)}" alt="Photo de ${esc(pseudo(u))}"${zoom?` data-zoom="${esc(url)}" data-zoom-t="${esc(pseudo(u))}" role="button" tabindex="0"`:""}>`:`<div class="avatar${lg?" lg":""}">${esc((pseudo(u)[0]||"?").toUpperCase())}</div>`};
 
 async function readExif(file){
   try{const buf=await file.slice(0,512*1024).arrayBuffer(),v=new DataView(buf);if(v.getUint16(0)!==0xFFD8)return null;let o=2;
@@ -1237,7 +1237,7 @@ async function openConv(id){S.conv=id;S.chatMode=null;S.showMembers=false;render
 async function openDm(uid){const {data,error}=await sb.rpc("peche_open_dm",{other:uid});if(error)throw error;await loadConvs();openConv(data)}
 function msgHTML(m){
   const c=m.catch_id&&S.catches.find(x=>x.id===m.catch_id),sp=m.spot_id&&spotById(m.spot_id);
-  return `<div class="msg${m.owner===S.user.id?" me":""}"><div class="who" style="display:flex;align-items:center;gap:6px">${m.owner!==S.user.id?avatar(m.owner).replace('class="avatar','style="width:22px;height:22px;font-size:.7rem" class="avatar'):""}${esc(pseudo(m.owner))} · ${dateFr(m.created_at)}</div>${m.text?esc(m.text):""}
+  return `<div class="msg${m.owner===S.user.id?" me":""}"><div class="who" style="display:flex;align-items:center;gap:6px">${m.owner!==S.user.id?avatar(m.owner,false,true).replace('class="avatar','style="width:22px;height:22px;font-size:.7rem" class="avatar'):""}${esc(pseudo(m.owner))} · ${dateFr(m.created_at)}</div>${m.text?esc(m.text):""}
     ${c?`<div style="margin-top:6px">${c.photo_path?img(c.photo_path,"ph","").replace('class="ph','style="border-radius:10px;width:100%" class="ph'):""}<div><b>${esc(SP[c.espece]?SP[c.espece].nom:c.espece)} ${esc(c.taille||"")} cm</b> · ${esc(c.leurre||"")}</div></div>`:""}
     ${sp?`<button class="btn sm" style="margin-top:6px" data-spot="${sp.id}">${isRoute(sp)?"🛶":"📍"} ${esc(sp.nom)}</button>`:""}</div>`;
 }
@@ -1261,7 +1261,7 @@ function viewChat(){
     return `<div class="row" style="margin-top:14px;justify-content:space-between"><button class="btn sm" data-act="chat-back">← Discussions</button>
       ${c!==GENERAL&&c.kind==="groupe"?`<button class="btn sm" data-act="chat-members">${S.showMembers?"Masquer les membres":"Membres"}</button>`:""}${c!==GENERAL&&c.kind==="dm"?`<button class="btn sm" data-act="open-profile" data-uid="${convOther(c)}">Voir le profil</button>`:""}</div>
       <h2 style="margin-bottom:2px">${c!==GENERAL&&c.kind==="dm"?"✉️ ":c===GENERAL?"💬 ":"👥 "}${esc(convTitle(c))}</h2><p class="small muted" style="margin:0 0 10px">${sub}</p>
-      ${S.showMembers&&c!==GENERAL?`<div class="panel stack" style="margin-bottom:12px">${mem.map(r=>`<div class="row">${avatar(r.user_id)}<b style="flex:1">${esc(pseudo(r.user_id))}${r.user_id===c.owner?' <span class="chip ghost">créateur</span>':""}</b>${c.owner===S.user.id&&r.user_id!==S.user.id?`<button class="btn sm" data-act="grp-remove" data-uid="${r.user_id}">Retirer</button>`:""}</div>`).join("")}
+      ${S.showMembers&&c!==GENERAL?`<div class="panel stack" style="margin-bottom:12px">${mem.map(r=>`<div class="row">${avatar(r.user_id,false,true)}<b style="flex:1">${esc(pseudo(r.user_id))}${r.user_id===c.owner?' <span class="chip ghost">créateur</span>':""}</b>${c.owner===S.user.id&&r.user_id!==S.user.id?`<button class="btn sm" data-act="grp-remove" data-uid="${r.user_id}">Retirer</button>`:""}</div>`).join("")}
         <div class="grid2"><button class="btn" data-act="grp-add">+ Ajouter des membres</button><button class="btn danger" data-act="grp-leave">Quitter le groupe</button></div></div>`:""}
       <div class="msgs">${msgs.length?msgs.map(msgHTML).join(""):`<div class="empty"><b>Aucun message</b>${c===GENERAL?"Lance la discussion, ou partage une prise depuis le carnet.":"Écris le premier message."}</div>`}</div>`;
   }
@@ -1487,8 +1487,8 @@ function viewProfils(){
   const p=S.me,gear=S.gear[S.user.id]||[],others=Object.keys(S.profiles).filter(u=>u!==S.user.id);
   return `<h2>Mon profil</h2>
   <form class="panel stack" id="prof-form">
-    <div class="row" style="gap:16px"><label class="av-edit" title="Changer la photo">${avatar(S.user.id,true)}<span class="cam" aria-hidden="true">📷</span><input type="file" id="p-photo" accept="image/*" hidden></label>
-      <div style="flex:1;min-width:0"><b>${esc(p.pseudo)}</b><div class="small muted">Touche la photo pour ${p.photo_path?"la changer":"en ajouter une"}.</div>${p.photo_path?`<button class="btn sm" type="button" data-act="photo-del" style="margin-top:6px">Retirer la photo</button>`:""}</div></div>
+    <div class="row" style="gap:16px"><span class="av-edit">${avatar(S.user.id,true,true)}<label class="cam" title="Changer la photo" aria-label="Changer la photo">📷<input type="file" id="p-photo" accept="image/*" hidden></label></span>
+      <div style="flex:1;min-width:0"><b>${esc(p.pseudo)}</b><div class="small muted">${p.photo_path?"Touche la photo pour l'agrandir, 📷 pour la changer.":"Touche 📷 pour ajouter une photo."}</div>${p.photo_path?`<button class="btn sm" type="button" data-act="photo-del" style="margin-top:6px">Retirer la photo</button>`:""}</div></div>
     <label class="f">Pseudo<input id="p-pseudo" value="${esc(p.pseudo)}" maxlength="40" required></label>
     <label class="f">Région<input id="p-region" value="${esc(p.region||"")}"></label>
     <label class="f">Techniques préférées<input id="p-tech" value="${esc(p.tech||"")}" placeholder="ex. Leurres, verticale, float tube"></label>
@@ -1523,7 +1523,7 @@ function profileView(u){
   if(!S.gear[u]&&!profileView.loading[u]){profileView.loading[u]=1;loadGear(u)}
   const p=S.profiles[u]||{},list=S.catches.filter(x=>x.owner===u),gear=S.gear[u]||[];
   return `<div class="row" style="margin-top:14px"><button class="btn sm" data-act="back-profiles">← Pêcheurs</button></div>
-  <div class="row" style="margin-top:14px">${avatar(u,true)}<div style="min-width:0;flex:1"><h2 style="margin:0">${esc(p.pseudo||"Pêcheur")}</h2><div class="muted">${esc(p.region||"")}</div></div></div>
+  <div class="row" style="margin-top:14px">${avatar(u,true,true)}<div style="min-width:0;flex:1"><h2 style="margin:0">${esc(p.pseudo||"Pêcheur")}</h2><div class="muted">${esc(p.region||"")}</div></div></div>
   <button class="btn primary wide" style="margin-top:12px" data-act="dm" data-uid="${u}">✉️ Envoyer un message privé</button>
   ${p.bio?`<p>${esc(p.bio)}</p>`:""}
   <div class="kv" style="margin-top:12px"><div><span class="small muted">Techniques</span><b class="t">${esc(p.tech||"—")}</b></div><div><span class="small muted">Espèces favorites</span><b class="t">${esc(p.esp||"—")}</b></div></div>
@@ -1729,6 +1729,11 @@ function renderSheet(force){
 
 /* ================= Actions ================= */
 let relache=true;
+function openZoom(src,title,round){closeZoom();const z=document.createElement("div");z.id="zoom";z.setAttribute("role","dialog");z.setAttribute("aria-label",title||"Image");
+  z.innerHTML=`<img src="${esc(src)}" alt="${esc(title||"")}"${round?' class="round"':""}>${title?`<div class="zt">${esc(title)}</div>`:""}<button class="btn sm zc" aria-label="Fermer">✕ Fermer</button>`;
+  z.addEventListener("click",closeZoom);document.body.appendChild(z);document.body.style.overflow="hidden"}
+function closeZoom(){const z=document.getElementById("zoom");if(z){z.remove();if(!S.sheet)document.body.style.overflow=""}}
+document.addEventListener("click",e=>{const z=e.target.closest&&e.target.closest("[data-zoom]");if(z){e.preventDefault();e.stopPropagation();openZoom(z.dataset.zoom,z.dataset.zoomT,z.dataset.zoomRound==="1")}},true);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-rtk],[data-milieu],[data-float],[data-zl],[data-tab],[data-act],[data-spot],[data-spottab],[data-filter],[data-rel],[data-auth],[data-base],[data-layer]");
   if(!t||t.disabled)return;
@@ -1816,6 +1821,8 @@ document.addEventListener("click",async e=>{
 });
 document.addEventListener("keydown",e=>{
   if(e.key==="Enter"&&e.target.id==="msg-in"){e.preventDefault();sendMsg()}
+  if(e.key==="Escape"&&document.getElementById("zoom")){closeZoom();return}
+  if((e.key==="Enter"||e.key===" ")&&e.target.dataset&&e.target.dataset.zoom){e.preventDefault();openZoom(e.target.dataset.zoom,e.target.dataset.zoomT)}
   if(e.key==="Escape"&&S.sheet)closeSheet();
 });
 async function sendMsg(){const i=document.getElementById("msg-in");const v=i.value.trim();if(!v||!S.conv)return;i.value="";

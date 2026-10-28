@@ -41,7 +41,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px
 .me-av{display:flex;align-items:center;gap:8px;background:none;border:0;padding:0;cursor:pointer;color:inherit;font:inherit}
 .me-av .avatar{width:36px;height:36px;font-size:1rem}
 .av-edit{position:relative;display:inline-block;cursor:pointer;flex:none}
-.av-edit .cam{position:absolute;right:-2px;bottom:-2px;width:30px;height:30px;border-radius:50%;background:var(--accent);color:var(--accent-fg);display:flex;align-items:center;justify-content:center;font-size:15px;border:2px solid var(--surface)}
+.av-edit .cam{cursor:pointer;position:absolute;right:-2px;bottom:-2px;width:30px;height:30px;border-radius:50%;background:var(--accent);color:var(--accent-fg);display:flex;align-items:center;justify-content:center;font-size:15px;border:2px solid var(--surface)}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:1000;background:var(--bg)}
 img{max-width:100%}
 [hidden]{display:none!important}
@@ -141,6 +141,13 @@ table.reg{border-collapse:collapse;width:100%;min-width:420px}
 table.reg th,table.reg td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
 #zonemap{position:relative;z-index:0}
 nav.tabs .nb{position:absolute;top:4px;left:calc(50% + 6px);min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--ban);color:#fff;font:700 11px/18px var(--body);text-align:center}
+.zoomable{cursor:zoom-in}
+#zoom{position:fixed;inset:0;z-index:2000;background:rgba(8,12,10,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));cursor:zoom-out;animation:zin .18s ease-out}
+#zoom img{max-width:min(92vw,560px);max-height:72vh;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.5);object-fit:contain}
+#zoom img.round{border-radius:50%}
+#zoom .zt{color:#EEF1EA;font-family:var(--display);font-weight:800;font-size:1.3rem}
+#zoom .zc{position:absolute;top:max(14px,env(safe-area-inset-top));right:max(14px,env(safe-area-inset-right))}
+@keyframes zin{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
 .zone-tip{font-family:var(--body);font-size:11px;font-weight:700;padding:2px 6px}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -148,7 +155,7 @@ nav.tabs .nb{position:absolute;top:4px;left:calc(50% + 6px);min-width:18px;heigh
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="brand"><img class="logo" src="logo-round-256.png?v=2" alt="" width="42" height="42">Coup du Soir</div>
+    <div class="brand"><img class="logo zoomable" src="logo-round-256.png?v=2" alt="Logo Coup du Soir" width="42" height="42" data-zoom="logo-round-512.png?v=2" data-zoom-t="Coup du Soir" data-zoom-round="1" role="button" tabindex="0">Coup du Soir</div>
     <div class="row" style="gap:10px;flex-wrap:nowrap"><div class="net" id="net"></div><button class="me-av" id="me-av" data-tab="profils" aria-label="Mon profil" hidden></button></div>
   </header>
   <div id="mapwrap" hidden>
@@ -173,6 +180,6 @@ nav.tabs .nb{position:absolute;top:4px;left:calc(50% + 6px);min-width:18px;heigh
 <div id="toast" class="toast" hidden></div>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/supabase.js"></script>
-<script src="app.js?v=28"></script>
+<script src="app.js?v=29"></script>
 </body>
 </html>
