@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Coup du Soir</title>
 <meta name="theme-color" content="#16231C">
+<script>try{var t=localStorage.getItem("cds-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
 <meta name="description" content="Appli de pêche entre amis : spots, conditions, conseils, carnet de prises, discussion.">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="logo-round-256.png?v=3" type="image/png">
@@ -29,13 +30,20 @@
   --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
   --r:14px; color-scheme:light;
 }
-@media (prefers-color-scheme: dark){:root{
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#0F1713; --surface:#18231D; --sunk:#111A15; --line:#2A3A30;
   --fg:#E6EDE6; --muted:#9BAA9F;
   --water:#1F4A4D; --water-deep:#2F6E72;
   --accent:#C6E03A; --accent-fg:#16231C;
   --ok:#5CC487; --warn:#F0B44C; --ban:#F07266;
   --ok-bg:#183527; --warn-bg:#3A2C10; --ban-bg:#3F1A17; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0F1713; --surface:#18231D; --sunk:#111A15; --line:#2A3A30;
+  --fg:#E6EDE6; --muted:#9BAA9F;
+  --water:#1F4A4D; --water-deep:#2F6E72;
+  --accent:#C6E03A; --accent-fg:#16231C;
+  --ok:#5CC487; --warn:#F0B44C; --ban:#F07266;
+  --ok-bg:#183527; --warn-bg:#3A2C10; --ban-bg:#3F1A17; color-scheme:dark}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.45;padding-top:env(safe-area-inset-top,0px)}
@@ -218,7 +226,7 @@ nav.tabs .nb{position:absolute;top:4px;left:calc(50% + 6px);min-width:18px;heigh
 <div id="toast" class="toast" hidden></div>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/supabase.js"></script>
-<script src="app.js?v=33"></script>
+<script src="app.js?v=34"></script>
 <script src="meteo.js?v=1"></script>
 </body>
 </html>

@@ -711,7 +711,8 @@ addEventListener("online",()=>{updateNet();syncQueue()});addEventListener("offli
 async function loadAll(){
   await Promise.all([loadProfiles(),loadSpots(),loadCatches(),loadMessages(),loadDepths(),loadGear(S.user.id),loadLicence(),loadZones(),loadSpotPhotos(),loadRegles(),loadConvs()]);
 }
-async function loadProfiles(){const {data}=await sb.from("peche_profiles").select("*");S.profiles=Object.fromEntries((data||[]).map(p=>[p.id,p]));S.me=S.profiles[S.user.id]||null;scheduleRender()}
+function applyTheme(t){t=t==="light"||t==="dark"?t:"auto";if(t==="auto")delete document.documentElement.dataset.theme;else document.documentElement.dataset.theme=t;try{localStorage.setItem("cds-theme",t)}catch(e){}}
+async function loadProfiles(){const {data}=await sb.from("peche_profiles").select("*");S.profiles=Object.fromEntries((data||[]).map(p=>[p.id,p]));S.me=S.profiles[S.user.id]||null;if(S.me&&S.me.theme)applyTheme(S.me.theme);scheduleRender()}
 async function loadSpots(){const {data}=await sb.from("peche_spots").select("*").order("created_at");if(data){S.spots=data;drawSpots()}scheduleRender()}
 async function loadCatches(){const {data}=await sb.from("peche_catches").select("*").order("caught_at",{ascending:false}).limit(400);if(data)S.catches=data;scheduleRender()}
 async function loadMessages(){const {data}=await sb.from("peche_messages").select("*").order("created_at",{ascending:false}).limit(600);if(data)S.messages=data.reverse();scheduleRender()}
@@ -1500,6 +1501,9 @@ function viewProfils(){
     <button class="btn primary" type="submit">Enregistrer mon profil</button>
     <p class="small muted" style="margin:0">Ton profil, tes prises et ton matos sont visibles par les membres. Ta carte de pêche et tes spots privés restent visibles par toi seul.</p>
   </form>
+  <div class="panel" style="margin-top:12px"><div class="lbl" style="margin-bottom:8px">Apparence</div>
+    <div class="seg" role="group" aria-label="Apparence">${[["auto","Auto"],["light","☀️ Clair"],["dark","🌙 Sombre"]].map(([k,t])=>`<button type="button" data-act="theme" data-id="${k}" aria-pressed="${(p.theme||"auto")===k}">${t}</button>`).join("")}</div>
+    <p class="small muted" style="margin:8px 0 0">« Auto » suit le réglage de ton téléphone. Ton choix est gardé sur tous tes appareils.</p></div>
   <h2>Mon matos</h2>
   <div class="stack">${gear.length?gear.map(g=>gearRow(g,true)).join(""):`<div class="empty"><b>Aucun matériel</b>Ajoute tes cannes, moulinets, fils et leurres.</div>`}</div>
   <form class="panel stack" id="gear-form" style="margin-top:12px"><div class="lbl">Ajouter du matériel</div>
@@ -1800,6 +1804,7 @@ document.addEventListener("click",async e=>{
       const txt=`🛶 Sortie float tube « ${sp.nom} »${dt?" le "+dateFr(dt):""} : ${fmtKm(routeLen(sp.trace))}, environ ${fmtDur(routeLen(sp.trace)/1000/FT_SPEED)} de navigation${st?", lever du soleil "+hhmm(st.rise):""}. Qui vient ?`;
       const {error}=await sb.from("peche_messages").insert({owner:S.user.id,text:txt,spot_id:sp.id});if(error)throw error;toast("Sortie proposée dans le chat général");break}
     case "route-done":{const sp=spotById(d.spot);const {error}=await sb.from("peche_spots").update({sortie_faite:true,sortie_date:sp.sortie_date||new Date().toISOString()}).eq("id",sp.id);if(error)throw error;await loadSpots();renderSheet(true);toast("Sortie marquée comme faite");break}
+    case "theme":{const t=d.id;applyTheme(t);S.me.theme=t;S.profiles[S.user.id].theme=t;render();const {error}=await sb.from("peche_profiles").update({theme:t}).eq("id",S.user.id);if(error)throw error;toast(t==="dark"?"Mode sombre activé":t==="light"?"Mode clair activé":"Apparence automatique");break}
     case "photo-del":{const old=S.me.photo_path;const {error}=await sb.from("peche_profiles").update({photo_path:null}).eq("id",S.user.id);if(error)throw error;if(old)sb.storage.from("peche-photos").remove([old]);await loadProfiles();toast("Photo retirée");break}
     case "chat-back":S.conv=null;S.chatMode=null;S.editGroup=null;render();scrollTo(0,0);break;
     case "chat-open":openConv(d.conv);break;
