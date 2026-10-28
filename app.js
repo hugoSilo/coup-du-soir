@@ -822,6 +822,7 @@ function scheduleRender(){if(rq)return;rq=requestAnimationFrame(()=>{rq=null;ren
 function render(){
   const v=document.getElementById("view"),ae=document.activeElement;
   if(!S.user){renderAuth();return}
+  document.body.classList.remove("auth-mode");
   if(S.recovery){renderRecovery();return}
   if(!S.me){renderOnboarding();return}
   document.getElementById("tabs").hidden=false;
@@ -843,11 +844,12 @@ function render(){
 
 /* ---- Connexion ---- */
 function renderAuth(){
+  document.body.classList.add("auth-mode");
   document.getElementById("tabs").hidden=true;document.getElementById("mapwrap").hidden=true;
   const m=S.authMode||"login";
   document.getElementById("view").innerHTML=`<div class="auth stack">
-    <img src="logo-full-512.png?v=3" alt="Coup du Soir" width="260" height="257" style="align-self:center;max-width:80%;height:auto;border-radius:22px;box-shadow:0 8px 24px rgba(0,0,0,.3)">
-    <p class="muted" style="text-align:center;margin:0">Spots, conditions, prises et discussion entre amis pêcheurs.</p>
+    <h1 class="sr-only">Coup du Soir</h1>
+    <p class="tag" style="text-align:center;margin:0">Spots, conditions, prises et discussion entre amis pêcheurs.</p>
     <div class="seg" role="group"><button data-auth="login" aria-pressed="${m==="login"}">Se connecter</button><button data-auth="signup" aria-pressed="${m==="signup"}">Créer un compte</button></div>
     <form class="panel stack" id="auth-form">
       <label class="f">E-mail<input id="a-mail" type="email" autocomplete="email" required></label>

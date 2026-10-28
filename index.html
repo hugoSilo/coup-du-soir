@@ -140,6 +140,23 @@ nav.tabs button[aria-current="page"] svg{color:var(--accent)}
 .empty b{display:block;color:var(--fg);font-family:var(--display);font-size:1.1rem;margin-bottom:4px}
 .ttl{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 .auth{max-width:420px;margin:8vh auto 0}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* En-tête : bandeau coucher de soleil */
+header.top{margin-inline:calc(-1 * max(16px,env(safe-area-inset-left,0px)));padding-inline:max(16px,env(safe-area-inset-left,0px));background:linear-gradient(90deg,rgba(8,5,10,.78) 0%,rgba(8,5,10,.35) 55%,rgba(8,5,10,.7) 100%),url(fond-bandeau.jpg?v=1) center 50%/cover #1a0f14;border-bottom:1px solid rgba(255,170,80,.4);color:#fff;color-scheme:dark}
+header.top .net{color:#fff}
+body::before{background:#120a10!important}
+/* Connexion : fond plein écran */
+body.auth-mode{background:#0b0709}
+body.auth-mode .wrap{padding-bottom:0}
+body.auth-mode .wrap::before{content:"";position:fixed;inset:0;z-index:-1;background:url(fond-connexion.jpg?v=1) center top/cover no-repeat #0b0709}
+body.auth-mode header.top{display:none}
+body.auth-mode .auth{margin:0 auto;min-height:100svh;justify-content:flex-end;padding:0 0 calc(20px + env(safe-area-inset-bottom,0px));color-scheme:dark;
+  --fg:#FFF4E6;--muted:#E9D3BC;--surface:rgba(16,10,14,.66);--sunk:rgba(0,0,0,.42);--line:rgba(255,180,100,.32);--accent:#F2A33A;--accent-fg:#1B0E06;color:var(--fg)}
+body.auth-mode .auth .panel{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+body.auth-mode .auth .seg{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+body.auth-mode .auth input{background:rgba(0,0,0,.35);color:#fff;border-color:rgba(255,180,100,.35)}
+body.auth-mode .auth .tag{text-shadow:0 1px 6px rgba(0,0,0,.9);color:#FFE9CF}
+
 .auth .brand{font-size:2.2rem;justify-content:center;margin-bottom:6px}
 table.reg{border-collapse:collapse;width:100%;min-width:420px}
 table.reg th,table.reg td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
@@ -184,6 +201,6 @@ nav.tabs .nb{position:absolute;top:4px;left:calc(50% + 6px);min-width:18px;heigh
 <div id="toast" class="toast" hidden></div>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/supabase.js"></script>
-<script src="app.js?v=31"></script>
+<script src="app.js?v=32"></script>
 </body>
 </html>

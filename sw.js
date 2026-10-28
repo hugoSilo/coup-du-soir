@@ -1,5 +1,5 @@
-const SHELL="cds-shell-v31",TILES="cds-tiles-v1";
-const FILES=["./","index.html","app.js","manifest.webmanifest","icon-192.png","icon-512.png","icon-180.png","logo-round-256.png","logo-round-512.png","logo-full-512.png","logo-full-1024.png","vendor/kaushan.woff2","vendor/leaflet.js","vendor/leaflet.css","vendor/supabase.js","vendor/591.supabase.js"];
+const SHELL="cds-shell-v32",TILES="cds-tiles-v1";
+const FILES=["./","index.html","app.js","manifest.webmanifest","icon-192.png","icon-512.png","icon-180.png","logo-round-256.png","logo-round-512.png","logo-full-512.png","logo-full-1024.png","fond-connexion.jpg","fond-bandeau.jpg","vendor/kaushan.woff2","vendor/leaflet.js","vendor/leaflet.css","vendor/supabase.js","vendor/591.supabase.js"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(SHELL).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()))});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>![SHELL,TILES].includes(k)).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener("fetch",e=>{
