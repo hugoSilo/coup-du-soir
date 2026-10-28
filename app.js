@@ -1341,7 +1341,9 @@ async function fetchProduct(raw){
   const site=new URL(url).hostname.replace(/^www\./,"");
   let data=null;
   try{const {data:d,error}=await sb.functions.invoke("peche-produit",{body:{url}});if(error)throw error;data=d}catch(e){data={blocked:true,error:e.message}}
-  if(data&&!data.blocked&&data.nom)return {...data,ok:true};
+  if(data&&!data.blocked&&data.nom){const r={...data,ok:true};if(r.nom===r.nom.toUpperCase())r.nom=r.nom.toLowerCase().replace(/(^|\s)\S/g,c=>c.toUpperCase()).replace(/\b(Lt|Fg|Ml|Mh|Xh|Pe)\b/g,x=>x.toUpperCase());
+    if(!r.marque){const b=(r.nom.match(/\b(Daiwa|Shimano|Caperlan|Savage Gear|Rapala|Fox Rage|Abu Garcia|Penn|Sakura|Illex|Megabass|Westin|Berkley|Mitchell|Okuma|Spro|Storm|Mepps|Keitech|Gunki|Zenaq|Major Craft|Hart|Tenryu|Duo|Jackson|Lucky Craft|Sufix|Power Pro|Seaguar|Varivas|Yo-Zuri|Fiiish|Xorus|Ultimate Fishing|Black Minnow)\b/i)||[])[1];if(b)r.marque=b}
+    return r}
   const share=shareTitle.replace(/\s*[|\-–]\s*(decathlon|amazon|pecheur\.com|pacific p[êe]che)[^|]*$/i,"").trim(),slug=slugTitle(url);
   const sw=new Set(wnorm(slug).trim().split(" ").filter(w=>w.length>3)),overlap=wnorm(share).trim().split(" ").some(w=>sw.has(w));
   const nom=share.length>3&&(overlap||!slug)?share:slug||share;
