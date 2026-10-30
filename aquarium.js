@@ -186,6 +186,8 @@ function bendMat(m,U){m.onBeforeCompile=sh=>{sh.uniforms.uT=U.uT;sh.uniforms.uA=
 
 /* ---------- Modèles 3D réalistes (.glb, générés par IA) ---------- */
 const FISH_GLB={brochet:"models/brochet.glb"};
+/* Retouches des modèles générés : couleur et barbillons ajoutés */
+const GLB_FIX={silure:{recolor:["#6a5638",.8],barbCol:"#2e271c",barbels:[[1,1,.42],[-1,1,.42],[1,-1,.1],[-1,-1,.1],[.45,-1,.075],[-.45,-1,.075]]}};
 const GLBC={};
 function loadFishModel(id){
   if(!FISH_GLB[id]||!THREE.GLTFLoader)return null;
@@ -397,10 +399,27 @@ function aqCatches(owner){return S.catches.filter(k=>k.owner===owner).sort((a,b)
 function fishLen(cm){return Math.max(.05,Math.min(TW*.42,cm/100*1.1))}
 function zoneY(z,len){const lo=.35+len*.12,hi=WTOP-.25-len*.1;return z==="bottom"?lo+Math.random()*(hi-lo)*.3:z==="top"?hi-Math.random()*(hi-lo)*.3:lo+(hi-lo)*(.25+Math.random()*.5)}
 function newTarget(f){const m=f.len*.55+.2,x=-TW/2+m+Math.random()*(TW-2*m),z=-TD/2+1+m*.3+Math.random()*Math.max(.1,TD-1.2-m*.9);f.tgt.set(x,Math.min(WTOP-.25,Math.max(zoneY(f.zone,f.len),floorH(x,z)+.25+f.len*.12)),z)}
+function recolorMat(m,col,mix){const prev=m.onBeforeCompile,key=m.customProgramCacheKey;m.onBeforeCompile=(sh,r)=>{prev(sh,r);sh.uniforms.uRc={value:new THREE.Color(col)};
+  sh.fragmentShader="uniform vec3 uRc;\n"+sh.fragmentShader.replace("#include <map_fragment>","#include <map_fragment>\n{float l=dot(diffuseColor.rgb,vec3(.3,.59,.11));diffuseColor.rgb=mix(diffuseColor.rgb,uRc*l*2.3,"+mix.toFixed(2)+");}")};
+  m.customProgramCacheKey=()=>key()+"|rc"+col+mix;return m}
+function barbelGeos(id,geo){const F=GLB_FIX[id];if(!F||!F.barbels)return [];if(GLBC[id].barbs)return GLBC[id].barbs;
+  const p=geo.attributes.position;let y0=1,y1=-1,zw=0,xm=-1;for(let i=0;i<p.count;i++){const x=p.getX(i);if(x>xm)xm=x}
+  for(let i=0;i<p.count;i++){const x=p.getX(i);if(x>xm-.07){const y=p.getY(i),z=Math.abs(p.getZ(i));if(y<y0)y0=y;if(y>y1)y1=y;if(z>zw)zw=z}}
+  const my=y0+(y1-y0)*.42,V=(a,b,c)=>new THREE.Vector3(a,b,c);
+  const out=F.barbels.map(([sd,up,len])=>{const k=len/.42;let pts;
+    if(up>0){const r=V(xm-.025,my+.005,sd*zw*.75);pts=[r,r.clone().add(V(.03*k,.01*k,sd*.05*k)),r.clone().add(V(-.04*k,-.05*k,sd*.15*k)),r.clone().add(V(-.18*k,-.1*k,sd*.2*k)),r.clone().add(V(-.32*k,-.08*k,sd*.22*k))]}
+    else{const r=V(xm-.05,y0+.012,sd*zw*.3);pts=[r,r.clone().add(V(.01,-len*.45,sd*len*.2)),r.clone().add(V(-len*.3,-len*.9,sd*len*.35))]}
+    const c=new THREE.CatmullRomCurve3(pts),seg=28,rad=6,g=new THREE.TubeGeometry(c,seg,up>0?.0075:.005,rad,false),pp=g.attributes.position;
+    for(let i=0;i<=seg;i++){const P=c.getPointAt(i/seg),t=1-.85*i/seg;for(let j=0;j<=rad;j++){const ix=i*(rad+1)+j;pp.setXYZ(ix,P.x+(pp.getX(ix)-P.x)*t,P.y+(pp.getY(ix)-P.y)*t,P.z+(pp.getZ(ix)-P.z)*t)}}
+    g.computeVertexNormals();return g});
+  return GLBC[id].barbs=out}
 function fishModel(id){const M=loadFishModel(id);
   if(M&&M.ready){const U={uT:{value:Math.random()*10},uA:{value:.04}},src=M.mat;
     const mat=bendMat(new THREE.MeshStandardMaterial({map:src.map,normalMap:src.normalMap,roughnessMap:src.roughnessMap,metalnessMap:src.metalnessMap,roughness:src.roughness??.6,metalness:src.metalness??0,color:src.color?src.color.clone():undefined}),U);
-    const grp=new THREE.Group(),m=new THREE.Mesh(M.geo,mat);m.userData.shared=1;m.frustumCulled=false;grp.add(m);return {grp,U}}
+    const F=GLB_FIX[id];if(F&&F.recolor)recolorMat(mat,F.recolor[0],F.recolor[1]);
+    const grp=new THREE.Group(),m=new THREE.Mesh(M.geo,mat);m.userData.shared=1;m.frustumCulled=false;grp.add(m);
+    const bg=barbelGeos(id,M.geo);if(bg.length){const bm=bendMat(new THREE.MeshStandardMaterial({color:F.barbCol||"#2a2a20",roughness:.5}),U);bg.forEach(g=>{const b=new THREE.Mesh(g,bm);b.userData.shared=1;b.frustumCulled=false;grp.add(b)})}
+    return {grp,U}}
   return buildFish(id)}
 function syncFish(E,owner){
   const cap=TANKS[aqCfg(owner).tank].cap,list=aqCatches(owner).slice(0,cap),sig=owner+"|"+TW+"|"+list.map(k=>k.id+":"+fishCm(k)+":"+k.espece).join(",");
@@ -535,7 +554,7 @@ function viewAquarium(){
   const podium=top.length?`<h3 style="margin:16px 0 8px">🏆 Podium des plus grosses prises</h3><div class="aq-podium">${[1,0,2].map(i=>{const k=top[i];if(!k)return `<div class="pd pd${i+1} empty"></div>`;
     return `<button class="pd pd${i+1}" data-aq="sel" data-id="${k.id}"><div class="pd-ph">${img(k.photo_path,"pd-img",spName(k.espece))}</div><b>${esc(spName(k.espece))}</b><span class="num">${Math.round(fishCm(k))} cm</span><span class="small muted">${new Date(k.caught_at).toLocaleDateString("fr-FR")}</span><div class="pd-step">${["🥇","🥈","🥉"][i]}</div></button>`}).join("")}</div>`:"";
   const cfg=aqCfg(owner),cap=TANKS[cfg.tank].cap,w=S.aqWallet;
-  return `<div class="ttl"><h2>${mine?"Mon aquarium":"Aquarium de "+esc(p.pseudo||"Pêcheur")}</h2>${mine?`<button class="coins-btn" data-aq="shop" aria-label="Ouvrir la boutique">🪙 ${w?w.solde:"…"}</button>`:`<button class="btn sm" data-aq="mine">← Mon aquarium</button>`}</div>
+  return `<div class="ttl"><h2>${mine?"Mon aquarium":"Aquarium de "+esc(p.pseudo||"Pêcheur")}</h2>${mine?`<button class="coins-btn" data-aq="shop" aria-label="Ouvrir la boutique">🪙 ${w&&w.solde!=null?w.solde:"…"}</button>`:`<button class="btn sm" data-aq="mine">← Mon aquarium</button>`}</div>
   ${mine?`<div class="row" style="gap:8px;margin-bottom:10px"><button class="btn sm" style="flex:1" data-aq="shop">🛒 Boutique</button><button class="btn sm${AQ.edit?" primary":""}" style="flex:1" data-aq="edit">${AQ.edit?"✔ Terminer":"🛠️ Aménager"}</button></div>`:""}
   <p class="small muted" style="margin:-4px 0 10px">${list.length} poisson${list.length>1?"s":""} · ${nsp} espèce${nsp>1?"s":""} · ${esc((S.shop||[]).find(x=>x.item===cfg.tank)?.nom||"Petit aquarium")} (${cap} places)${list.length>cap?` · les ${cap} plus gros nagent${mine?", agrandis-le dans la boutique":""}`:""}</p>
   <div id="aq-wrap" class="${S.aqFull?"full":""}${S.aqList===false?" nolist":""}${S.aqList===true?" showlist":""}">
