@@ -828,11 +828,12 @@ function render(){
   if(!S.me){renderOnboarding();return}
   document.getElementById("tabs").hidden=false;
   if(S.spots.length&&!render.alertsChecked&&typeof checkAlerts==="function"){render.alertsChecked=true;checkAlerts()}
-  document.querySelectorAll("nav.tabs button").forEach(b=>b.setAttribute("aria-current",b.dataset.tab===S.tab?"page":"false"));
+  document.querySelectorAll("nav.tabs button").forEach(b=>b.setAttribute("aria-current",b.dataset.tab===(S.tab==="licence"?"profils":S.tab)?"page":"false"));
   document.getElementById("mapwrap").hidden=S.tab!=="carte";
   if(S.tab==="carte"){initMap();setTimeout(()=>map.invalidateSize(),0)}
   const busy=ae&&v.contains(ae)&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName);
-  if(!busy)v.innerHTML=({carte:viewCarte,prises:viewPrises,chat:viewChat,licence:viewLicence,profils:viewProfils,meteo:()=>viewMeteo()})[S.tab]();
+  if(!busy)v.innerHTML=({carte:viewCarte,prises:viewPrises,chat:viewChat,licence:()=>`<div class="row" style="margin-top:14px"><button class="btn sm" data-tab="profils">← Mon profil</button></div>`+viewLicence(),profils:viewProfils,meteo:()=>viewMeteo(),aquarium:()=>viewAquarium()})[S.tab]();
+  if(typeof aqMount==="function"){if(S.tab==="aquarium")aqMount();else aqPause()}
   const comp=document.getElementById("composer");
   {const av=document.getElementById("me-av");if(av){av.hidden=false;const h=avatar(S.user.id);if(av.dataset.h!==h){av.dataset.h=h;av.innerHTML=h}}}
   const inConv=S.tab==="chat"&&S.conv&&!S.chatMode;
@@ -1490,6 +1491,7 @@ function viewProfils(){
   if(S.viewProfile&&S.viewProfile!==S.user.id)return profileView(S.viewProfile);
   const p=S.me,gear=S.gear[S.user.id]||[],others=Object.keys(S.profiles).filter(u=>u!==S.user.id);
   return `<h2>Mon profil</h2>
+  <div class="row" style="margin-bottom:12px;gap:8px"><button class="btn" style="flex:1" data-tab="licence">🪪 Ma carte de pêche</button><button class="btn" style="flex:1" data-aq="mine" data-go="1">🐠 Mon aquarium</button></div>
   <form class="panel stack" id="prof-form">
     <div class="row" style="gap:16px"><span class="av-edit">${avatar(S.user.id,true,true)}<label class="cam" title="Changer la photo" aria-label="Changer la photo">📷<input type="file" id="p-photo" accept="image/*" hidden></label></span>
       <div style="flex:1;min-width:0"><b>${esc(p.pseudo)}</b><div class="small muted">${p.photo_path?"Touche la photo pour l'agrandir, 📷 pour la changer.":"Touche 📷 pour ajouter une photo."}</div>${p.photo_path?`<button class="btn sm" type="button" data-act="photo-del" style="margin-top:6px">Retirer la photo</button>`:""}</div></div>
@@ -1531,7 +1533,7 @@ function profileView(u){
   const p=S.profiles[u]||{},list=S.catches.filter(x=>x.owner===u),gear=S.gear[u]||[];
   return `<div class="row" style="margin-top:14px"><button class="btn sm" data-act="back-profiles">← Pêcheurs</button></div>
   <div class="row" style="margin-top:14px">${avatar(u,true,true)}<div style="min-width:0;flex:1"><h2 style="margin:0">${esc(p.pseudo||"Pêcheur")}</h2><div class="muted">${esc(p.region||"")}</div></div></div>
-  <button class="btn primary wide" style="margin-top:12px" data-act="dm" data-uid="${u}">✉️ Envoyer un message privé</button>
+  <div class="row" style="margin-top:12px;gap:8px"><button class="btn primary" style="flex:1" data-act="dm" data-uid="${u}">✉️ Message privé</button><button class="btn" style="flex:1" data-aq="visit" data-uid="${u}">🐠 Voir son aquarium</button></div>
   ${p.bio?`<p>${esc(p.bio)}</p>`:""}
   <div class="kv" style="margin-top:12px"><div><span class="small muted">Techniques</span><b class="t">${esc(p.tech||"—")}</b></div><div><span class="small muted">Espèces favorites</span><b class="t">${esc(p.esp||"—")}</b></div></div>
   ${list.length?`<div class="panel" style="margin-top:12px">${stats(list)}</div>`:""}
