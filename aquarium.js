@@ -185,7 +185,7 @@ function bendMat(m,U){m.onBeforeCompile=sh=>{sh.uniforms.uT=U.uT;sh.uniforms.uA=
   sh.vertexShader="uniform float uT;uniform float uA;\n"+sh.vertexShader.replace("#include <begin_vertex>","#include <begin_vertex>\nfloat sB=clamp(.5-position.x,0.,1.3);transformed.z+=uA*sB*sB*sin(uT-sB*5.5);")};return patchMat(m,"bend")}
 
 /* ---------- Modèles 3D réalistes (.glb, générés par IA) ---------- */
-const FISH_GLB={brochet:"models/brochet.glb"};
+const FISH_GLB={brochet:"models/brochet.glb",perche:"models/perche.glb"};
 /* Retouches des modèles générés : couleur et barbillons ajoutés */
 const GLB_FIX={silure:{recolor:["#6a5638",.8],barbCol:"#2e271c",barbels:[[1,1,.42],[-1,1,.42],[1,-1,.1],[-1,-1,.1],[.45,-1,.075],[-.45,-1,.075]]}};
 const GLBC={};
@@ -196,7 +196,7 @@ function loadFishModel(id){
   new THREE.GLTFLoader().load(FISH_GLB[id],gl=>{
     let mesh=null;gl.scene.traverse(o=>{if(o.isMesh&&!mesh)mesh=o});if(!mesh)return;
     gl.scene.updateMatrixWorld(true);const src=mesh.geometry,geo=new THREE.BufferGeometry();
-    ['position','normal','uv'].forEach(n=>{const at=src.attributes[n];if(!at)return;const k=at.itemSize,arr=new Float32Array(at.count*k);for(let i=0;i<at.count;i++){arr[i*k]=at.getX(i);if(k>1)arr[i*k+1]=at.getY(i);if(k>2)arr[i*k+2]=at.getZ(i)}geo.setAttribute(n,new THREE.BufferAttribute(arr,k))});
+    ['position','normal','uv','color'].forEach(n=>{const at=src.attributes[n];if(!at)return;const k=at.itemSize,arr=new Float32Array(at.count*k);for(let i=0;i<at.count;i++){arr[i*k]=at.getX(i);if(k>1)arr[i*k+1]=at.getY(i);if(k>2)arr[i*k+2]=at.getZ(i);if(k>3)arr[i*k+3]=at.getW(i)}geo.setAttribute(n,new THREE.BufferAttribute(arr,k))});
     if(src.index)geo.setIndex(src.index.clone());geo.applyMatrix4(mesh.matrixWorld);
     geo.rotateY(PI/2);geo.computeBoundingBox();const bb=geo.boundingBox,len=bb.max.x-bb.min.x,cx=(bb.max.x+bb.min.x)/2,cy=(bb.max.y+bb.min.y)/2,cz=(bb.max.z+bb.min.z)/2;
     geo.translate(-cx,-cy,-cz);geo.scale(1/len,1/len,1/len);
@@ -415,7 +415,7 @@ function barbelGeos(id,geo){const F=GLB_FIX[id];if(!F||!F.barbels)return [];if(G
   return GLBC[id].barbs=out}
 function fishModel(id){const M=loadFishModel(id);
   if(M&&M.ready){const U={uT:{value:Math.random()*10},uA:{value:.04}},src=M.mat;
-    const mat=bendMat(new THREE.MeshStandardMaterial({map:src.map,normalMap:src.normalMap,roughnessMap:src.roughnessMap,metalnessMap:src.metalnessMap,roughness:src.roughness??.6,metalness:src.metalness??0,color:src.color?src.color.clone():undefined}),U);
+    const mat=bendMat(new THREE.MeshStandardMaterial({vertexColors:!!M.geo.attributes.color,map:src.map,normalMap:src.normalMap,roughnessMap:src.roughnessMap,metalnessMap:src.metalnessMap,roughness:src.roughness??.6,metalness:src.metalness??0,color:src.color?src.color.clone():undefined}),U);
     const F=GLB_FIX[id];if(F&&F.recolor)recolorMat(mat,F.recolor[0],F.recolor[1]);
     const grp=new THREE.Group(),m=new THREE.Mesh(M.geo,mat);m.userData.shared=1;m.frustumCulled=false;grp.add(m);
     const bg=barbelGeos(id,M.geo);if(bg.length){const bm=bendMat(new THREE.MeshStandardMaterial({color:F.barbCol||"#2a2a20",roughness:.5}),U);bg.forEach(g=>{const b=new THREE.Mesh(g,bm);b.userData.shared=1;b.frustumCulled=false;grp.add(b)})}
@@ -456,7 +456,7 @@ function aqLoop(){
   const sp=E.surf.geometry.attributes.position;for(let i=0;i<sp.count;i++){const x=sp.getX(i),y=sp.getY(i);sp.setZ(i,.025*Math.sin(x*2+t*1.6)+.02*Math.cos(y*2.6+t*1.2))}sp.needsUpdate=true;
   const sel=AQ.fish.find(f=>f.id===AQ.sel);
   {const dg=AQ.edit&&AQ.dsel!=null&&E.decoLayer.children.find(o=>o.userData.di===AQ.dsel);E.dmark.visible=!!dg;if(dg){E.dmark.position.set(dg.position.x,.2,dg.position.z);E.dmark.scale.setScalar(1+Math.sin(t*5)*.06)}}
-  E.marker.visible=!!sel;if(sel){E.marker.position.set(sel.pos.x,sel.pos.y+sel.len*.32+.14+Math.sin(t*4)*.03,sel.pos.z)}
+  E.marker.visible=!!sel;if(sel){const ms=Math.max(.35,Math.min(1,sel.len*1.6));E.marker.scale.setScalar(ms);E.marker.position.set(sel.pos.x,sel.pos.y+sel.len*.32+.14*ms+Math.sin(t*4)*.03*ms,sel.pos.z)}
   if(AQ.mode==="walk"){const w=E.walk;if(w.mv.x||w.mv.y)moveWalk(E,-w.mv.y*dt*1.4,w.mv.x*dt*1.4,0);if(w.up)moveWalk(E,0,0,w.up*dt*1.1);
     E.cam.position.copy(w.pos);E.cam.rotation.set(w.pitch,w.yaw,0,"YXZ")}
   else{const o=E.orb;if(AQ.follow&&sel){o.tgt.lerp(sel.pos,Math.min(1,dt*3));o.r+=(Math.max(.45,sel.len*2.6)-o.r)*Math.min(1,dt*1.5)}
