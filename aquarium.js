@@ -185,9 +185,9 @@ function bendMat(m,U){m.onBeforeCompile=sh=>{sh.uniforms.uT=U.uT;sh.uniforms.uA=
   sh.vertexShader="uniform float uT;uniform float uA;\n"+sh.vertexShader.replace("#include <begin_vertex>","#include <begin_vertex>\nfloat sB=clamp(.5-position.x,0.,1.3);transformed.z+=uA*sB*sB*sin(uT-sB*5.5);")};return patchMat(m,"bend")}
 
 /* ---------- Modèles 3D réalistes (.glb, générés par IA) ---------- */
-const FISH_GLB={brochet:"models/brochet.glb",perche:"models/perche.glb"};
+const FISH_GLB={brochet:"models/brochet.glb",perche:"models/perche.glb",silure:"models/silure.glb"};
 /* Retouches des modèles générés : couleur et barbillons ajoutés */
-const GLB_FIX={silure:{recolor:["#6a5638",.8],barbCol:"#2e271c",barbels:[[1,1,.42],[-1,1,.42],[1,-1,.1],[-1,-1,.1],[.45,-1,.075],[-.45,-1,.075]]}};
+const GLB_FIX={silure:{barbCol:"#2e271c",barbels:[[1,1,.42],[-1,1,.42],[1,-1,.1],[-1,-1,.1],[.45,-1,.075],[-.45,-1,.075]]}};
 const GLBC={};
 function loadFishModel(id){
   if(!FISH_GLB[id]||!THREE.GLTFLoader)return null;
