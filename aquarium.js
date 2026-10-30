@@ -393,7 +393,8 @@ function pick(E,e){const rc=E.R.domElement.getBoundingClientRect(),v=new THREE.V
 
 /* ---------- Poissons de l'aquarium ---------- */
 function aqCatches(owner){return S.catches.filter(k=>k.owner===owner).sort((a,b)=>fishCm(b)-fishCm(a))}
-function fishLen(cm){return Math.max(.28,Math.min(2.2,.24+cm/100*.85))}
+/* Taille proportionnelle à la taille réelle : 1 m = 1,1 unité (l'aquarium de départ fait 6 unités de large) */
+function fishLen(cm){return Math.max(.05,Math.min(TW*.42,cm/100*1.1))}
 function zoneY(z,len){const lo=.35+len*.12,hi=WTOP-.25-len*.1;return z==="bottom"?lo+Math.random()*(hi-lo)*.3:z==="top"?hi-Math.random()*(hi-lo)*.3:lo+(hi-lo)*(.25+Math.random()*.5)}
 function newTarget(f){const m=f.len*.55+.2,x=-TW/2+m+Math.random()*(TW-2*m),z=-TD/2+1+m*.3+Math.random()*Math.max(.1,TD-1.2-m*.9);f.tgt.set(x,Math.min(WTOP-.25,Math.max(zoneY(f.zone,f.len),floorH(x,z)+.25+f.len*.12)),z)}
 function fishModel(id){const M=loadFishModel(id);
@@ -409,7 +410,7 @@ function syncFish(E,owner){
   AQ.fish=list.map(k=>{const {grp,U}=fishModel(k.espece),sp=fishSpec(k.espece),cm=fishCm(k),len=fishLen(cm);
     grp.scale.setScalar(len);grp.userData.fid=k.id;grp.rotation.order="YZX";grp.traverse(o=>{if(o.isMesh)o.castShadow=HQ});
     const f={id:k.id,k,grp,U,len,zone:sp.zone,eel:sp.eel,pos:new THREE.Vector3(),dir:new THREE.Vector3(Math.random()-.5,0,Math.random()-.5).normalize(),tgt:new THREE.Vector3(),
-      speed:(.22+Math.random()*.12)*(.7+len*.35)*(sp.eel?.7:1),turn:1.2/(.6+len)};
+      speed:(.18+Math.random()*.1)*(.55+len*.6)*(sp.eel?.7:1),turn:1.2/(.6+len)};
     newTarget(f);f.pos.copy(f.tgt);newTarget(f);E.fishLayer.add(grp);return f});
   if(AQ.sel&&!AQ.fish.find(f=>f.id===AQ.sel))AQ.sel=null;
 }
@@ -439,7 +440,7 @@ function aqLoop(){
   E.marker.visible=!!sel;if(sel){E.marker.position.set(sel.pos.x,sel.pos.y+sel.len*.32+.14+Math.sin(t*4)*.03,sel.pos.z)}
   if(AQ.mode==="walk"){const w=E.walk;if(w.mv.x||w.mv.y)moveWalk(E,-w.mv.y*dt*1.4,w.mv.x*dt*1.4,0);if(w.up)moveWalk(E,0,0,w.up*dt*1.1);
     E.cam.position.copy(w.pos);E.cam.rotation.set(w.pitch,w.yaw,0,"YXZ")}
-  else{const o=E.orb;if(AQ.follow&&sel){o.tgt.lerp(sel.pos,Math.min(1,dt*3));o.r+=(Math.max(1,sel.len*2.6)-o.r)*Math.min(1,dt*1.5)}
+  else{const o=E.orb;if(AQ.follow&&sel){o.tgt.lerp(sel.pos,Math.min(1,dt*3));o.r+=(Math.max(.45,sel.len*2.6)-o.r)*Math.min(1,dt*1.5)}
     E.cam.position.set(o.tgt.x+o.r*Math.sin(o.ph)*Math.sin(o.th),o.tgt.y+o.r*Math.cos(o.ph),o.tgt.z+o.r*Math.sin(o.ph)*Math.cos(o.th));E.cam.lookAt(o.tgt)}
   if(E.composer)E.composer.render(dt);else E.R.render(E.scene,E.cam);
 }
